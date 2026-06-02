@@ -15,7 +15,7 @@ PingMon continuously pings many hosts, persists every result to SQLite, and serv
 - **Access**: optional **Bearer-token auth**, fully-open CORS, and **multi-backend** support (one UI, many servers)
 - **Read-only / demo mode** (`--readonly`): freeze all writes for a view-only or public-demo deployment
 - **ARP discovery** (`--arpscan`): periodically scan neighbors on all interfaces (ip/mac/name, accumulated) at `GET /api/arp`
-- **CLI commands**: e.g. `pingmon arp` runs a standalone ARP scan without the server (extensible command framework)
+- **CLI commands**: standalone tools that work directly on the data store (no server/token) — `pingmon arp` (scan), `pingmon stats` (stored-state summary), `pingmon host add|list`, `pingmon group add|edit|list|assign` — plus an extensible command framework
 
 See the [Server Documentation](./server/README.md) for the full API, flags, and behavior.
 

@@ -31,7 +31,8 @@ info:
     ARP scanning: when started with `--arpscan`, the server periodically reads
     the OS ARP/neighbor table on all interfaces (interval from `arp_interval` in
     the .env file or `--arp-interval`, default 1m), accumulates what it sees
-    (first/last seen + count, never forgotten), and serves it at `GET /api/arp`.
+    (first/last seen, count, and every distinct name ever resolved; never
+    forgotten), and serves it at `GET /api/arp`.
     That endpoint exists only when `--arpscan` is enabled; `/api/profile` reports
     `arpScan`.
 
@@ -753,7 +754,10 @@ components:
       properties:
         ip: { type: string }
         mac: { type: string, description: "Hardware (ARP) address; latest observed." }
-        name: { type: string, description: "Reverse-DNS name (best effort)." }
+        names:
+          type: array
+          items: { type: string }
+          description: "All distinct reverse-DNS names ever seen for this host, in order of first appearance."
         interface: { type: string }
         firstSeen: { type: string, format: date-time }
         lastSeen: { type: string, format: date-time }

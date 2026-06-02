@@ -74,6 +74,25 @@ func TestAccumulateMerge(t *testing.T) {
 	}
 }
 
+func TestNamesAccumulate(t *testing.T) {
+	s := New(0)
+	s.SetResolve(false)
+
+	raw := []rawEntry{{ip: "10.0.0.1", mac: "aa:bb:cc:dd:ee:ff", iface: "en0"}}
+	s.merge(raw, map[string]string{"10.0.0.1": "first.local"})
+	s.merge(raw, map[string]string{"10.0.0.1": "first.local"})  // same name, no dup
+	s.merge(raw, map[string]string{"10.0.0.1": "second.local"}) // changed name -> appended
+	s.merge(raw, map[string]string{"10.0.0.1": ""})             // empty -> ignored
+
+	e := s.Entries()[0]
+	if len(e.Names) != 2 || e.Names[0] != "first.local" || e.Names[1] != "second.local" {
+		t.Fatalf("expected [first.local second.local], got %v", e.Names)
+	}
+	if e.Count != 4 {
+		t.Fatalf("expected count 4, got %d", e.Count)
+	}
+}
+
 func TestEntriesSortedByIP(t *testing.T) {
 	s := New(0)
 	s.SetResolve(false)

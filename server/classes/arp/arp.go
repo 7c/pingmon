@@ -20,7 +20,7 @@ import (
 type Entry struct {
 	IP        string    `json:"ip"`
 	MAC       string    `json:"mac"`       // hardware (ARP) address (latest observed)
-	Name      string    `json:"name"`      // reverse-DNS name, best effort
+	Names     []string  `json:"names"`     // all distinct reverse-DNS names ever seen, in order
 	Interface string    `json:"interface"` // interface it was seen on (latest observed)
 	FirstSeen time.Time `json:"firstSeen"`
 	LastSeen  time.Time `json:"lastSeen"`
@@ -93,29 +93,21 @@ func (s *Scanner) loop() {
 	}
 }
 
-// ScanOnce reads the ARP table once, resolves names for new IPs, merges the
-// results into the cache, and returns the full sorted snapshot.
+// ScanOnce reads the ARP table once, resolves the current name for each IP
+// (outside the lock), merges the results into the cache, and returns the full
+// sorted snapshot. Names are resolved every scan so that a name change is
+// detected and appended to the entry's Names list.
 func (s *Scanner) ScanOnce() ([]Entry, error) {
 	raws, err := readARPTable()
 	if err != nil {
 		return nil, err
 	}
 
-	// Snapshot known names so DNS resolution happens outside the lock.
-	s.mu.RLock()
-	known := make(map[string]string, len(s.entries))
-	for ip, e := range s.entries {
-		known[ip] = e.Name
-	}
-	s.mu.RUnlock()
-
 	names := make(map[string]string, len(raws))
-	for _, r := range raws {
-		name := known[r.ip]
-		if name == "" && s.resolve {
-			name = resolveName(r.ip)
+	if s.resolve {
+		for _, r := range raws {
+			names[r.ip] = resolveName(r.ip)
 		}
-		names[r.ip] = name
 	}
 
 	s.merge(raws, names)
@@ -124,7 +116,8 @@ func (s *Scanner) ScanOnce() ([]Entry, error) {
 
 // merge accumulates a scan's raw entries into the cache, preserving FirstSeen,
 // bumping Count, and updating LastSeen / latest MAC+interface. names is an
-// optional ip->name map; entries keep an existing non-empty name.
+// optional ip->name map; any newly-seen (distinct) name is appended to the
+// entry's Names list so all names ever observed are retained.
 func (s *Scanner) merge(raws []rawEntry, names map[string]string) {
 	now := time.Now().UTC()
 	s.mu.Lock()
@@ -139,11 +132,21 @@ func (s *Scanner) merge(raws []rawEntry, names map[string]string) {
 		if !existed {
 			e.FirstSeen = now
 		}
-		if e.Name == "" {
-			e.Name = names[r.ip]
+		if n := names[r.ip]; n != "" && !containsString(e.Names, n) {
+			e.Names = append(e.Names, n)
 		}
 		s.entries[r.ip] = e
 	}
+}
+
+// containsString reports whether xs contains x.
+func containsString(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // Entries returns a snapshot of all cached entries, sorted by IP.
@@ -153,6 +156,9 @@ func (s *Scanner) Entries() []Entry {
 
 	out := make([]Entry, 0, len(s.entries))
 	for _, e := range s.entries {
+		if e.Names == nil {
+			e.Names = []string{} // serialize as [] rather than null
+		}
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return lessIP(out[i].IP, out[j].IP) })

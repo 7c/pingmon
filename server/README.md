@@ -87,67 +87,12 @@ forgotten).
 {
   "count": 1,
   "entries": [
-    { "ip": "192.168.1.1", "mac": "cc:28:aa:9c:22:00", "name": "router.lan",
+    { "ip": "192.168.1.1", "mac": "cc:28:aa:9c:22:00", "names": ["router.lan"],
       "interface": "en0", "firstSeen": "2026-06-02T09:00:00Z",
       "lastSeen": "2026-06-02T10:00:00Z", "count": 60 }
   ]
 }
 ```
-
-## Read-only / demo mode
-
-Start with `--readonly` to **freeze** all state: every mutating request
-(`POST`/`PUT`/`PATCH`/`DELETE` under `/api`) is rejected with **`423 Locked`**
-and a `{ "success": false, "readOnly": true }` body, while reads and live polling
-continue to work. `GET /api/profile` reports `"readOnly": true` so a UI can
-switch to view-only up front (rather than discovering it on the first failed
-write). Use it to publish a frozen view of your hosts/groups, or to run a public
-demo with realtime data that visitors cannot modify.
-
-```bash
-sudo ./bin/pingmon --readonly
-```
-
-## ARP discovery
-
-With `--arpscan`, the server periodically reads the OS ARP/neighbor table on all
-interfaces, resolves names (best-effort reverse DNS), and **accumulates** what it
-sees — entries are never forgotten. Each entry tracks `firstSeen`, `lastSeen`,
-and `count` (how many scans saw it); the latest MAC/interface is kept. Results
-are published at `GET /api/arp` as a helper for the UI.
-
-The scan interval comes from `.env` `arp_interval` (Go duration, default `1m`)
-or `--arp-interval`:
-
-```bash
-sudo ./bin/pingmon --arpscan --arp-interval 30s
-```
-
-On Linux it reads `/proc/net/arp`; on macOS/BSD it parses `arp -an`. (This reads
-the neighbor cache rather than actively probing.)
-
-## Minimum ping interval
-
-The server enforces a floor on per-host ping intervals: any configured interval
-below the minimum is silently **clamped up** (the stored/returned value reflects
-the enforced value, so the UI sees the truth). Default `500ms`, configurable via
-`.env` `minimum_ping_interval` or `--min-ping-interval`. The floor is advertised
-as `minIntervalMs` in `GET /api/profile`.
-
-## CLI commands
-
-`pingmon` runs the server by default, but also provides standalone commands
-(the command framework is built to grow):
-
-```bash
-pingmon arp                 # scan the ARP table on all interfaces and print it
-pingmon arp --json          # JSON output
-pingmon arp --no-resolve    # skip reverse-DNS lookups
-pingmon help                # list commands and flags
-```
-
-`pingmon arp` performs a one-shot scan without starting the server (no root
-needed for reading the ARP cache).
 
 ### GET /api/pinger
 Returns statistics for all running pingers.
@@ -368,6 +313,83 @@ backend URLs:
   whether auth is required when adding a backend.
 - A bad/missing token on a protected endpoint returns **`403`** (a wrong URL
   returns `404`), so the UI can distinguish "forbidden" from "not found".
+
+## Read-only / demo mode
+
+Start with `--readonly` to **freeze** all state: every mutating request
+(`POST`/`PUT`/`PATCH`/`DELETE` under `/api`) is rejected with **`423 Locked`**
+and a `{ "success": false, "readOnly": true }` body, while reads and live polling
+continue to work. `GET /api/profile` reports `"readOnly": true` so a UI can
+switch to view-only up front (rather than discovering it on the first failed
+write). Use it to publish a frozen view of your hosts/groups, or to run a public
+demo with realtime data that visitors cannot modify.
+
+```bash
+sudo ./bin/pingmon --readonly
+```
+
+## ARP discovery
+
+With `--arpscan`, the server periodically reads the OS ARP/neighbor table on all
+interfaces, resolves names (best-effort reverse DNS), and **accumulates** what it
+sees — entries are never forgotten. Each entry tracks `firstSeen`, `lastSeen`,
+and `count` (how many scans saw it); the latest MAC/interface is kept. Names are
+re-resolved each scan and **every distinct name ever seen is kept in `names`** —
+so a host whose reverse-DNS changes shows all of its names. Results are published
+at `GET /api/arp` as a helper for the UI.
+
+The scan interval comes from `.env` `arp_interval` (Go duration, default `1m`)
+or `--arp-interval`:
+
+```bash
+sudo ./bin/pingmon --arpscan --arp-interval 30s
+```
+
+On Linux it reads `/proc/net/arp`; on macOS/BSD it parses `arp -an`. (This reads
+the neighbor cache rather than actively probing.)
+
+## Minimum ping interval
+
+The server enforces a floor on per-host ping intervals: any configured interval
+below the minimum is silently **clamped up** (the stored/returned value reflects
+the enforced value, so the UI sees the truth). Default `500ms`, configurable via
+`.env` `minimum_ping_interval` or `--min-ping-interval`. The floor is advertised
+as `minIntervalMs` in `GET /api/profile`.
+
+## CLI commands
+
+`pingmon` runs the server by default, but also provides standalone commands
+(the command framework is built to grow). The store-backed commands operate
+**directly on the data store — no server and no token required** — useful for
+provisioning or inspecting a database offline.
+
+```bash
+# ARP (one-shot scan, no server)
+pingmon arp [--json] [--no-resolve]
+
+# Stored-state summary (hosts, groups, results, db size, data span)
+pingmon stats [--json] [--datafolder DIR] [--db FILE]
+
+# Hosts
+pingmon host add [--interval ms] [--timeout ms] [--size n] [--name N] [--tags a,b] <ip> [<ip>...]
+pingmon host list
+
+# Groups
+pingmon group add [--color C] [--desc D] <name>
+pingmon group edit [--name N] [--color C] [--desc D] <id>
+pingmon group list
+pingmon group assign   <group-id> <ip> [<ip>...]
+pingmon group unassign <group-id> <ip> [<ip>...]
+
+pingmon help            # list commands and flags
+```
+
+All store commands accept `--datafolder`/`--db` (defaulting to the server's).
+The enforced minimum ping interval still applies (a low `--interval` is clamped
+up). Flags must come **before** positional arguments.
+
+> A running server only loads hosts at startup, so hosts added/edited via the
+> CLI while the server is running are picked up on its next restart.
 
 ## Configuration
 

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 
@@ -60,10 +61,10 @@ func printArpTable(entries []arp.Entry) {
 		return
 	}
 
-	fmt.Fprintf(out, "%s\n", header("%-16s %-17s %-6s %-8s %s", "IP", "MAC", "SEEN", "IFACE", "NAME"))
+	fmt.Fprintf(out, "%s\n", header("%-16s %-17s %-6s %-8s %s", "IP", "MAC", "SEEN", "IFACE", "NAMES"))
 	for _, e := range entries {
 		fmt.Fprintf(out, "%-16s %-17s %-6d %-8s %s\n",
-			e.IP, e.MAC, e.Count, e.Interface, dim(e.Name))
+			e.IP, e.MAC, e.Count, e.Interface, dim(strings.Join(e.Names, ", ")))
 	}
 	fmt.Fprintf(out, "\n%s\n", dim(fmt.Sprintf("%d host(s)", len(entries))))
 }

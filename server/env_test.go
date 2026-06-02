@@ -47,7 +47,7 @@ func TestArpHandler(t *testing.T) {
 	now := time.Now().UTC()
 	provider := func() []arp.Entry {
 		return []arp.Entry{
-			{IP: "10.0.0.1", MAC: "aa:bb:cc:dd:ee:ff", Name: "gw.local", Interface: "en0", FirstSeen: now, LastSeen: now, Count: 3},
+			{IP: "10.0.0.1", MAC: "aa:bb:cc:dd:ee:ff", Names: []string{"gw.local"}, Interface: "en0", FirstSeen: now, LastSeen: now, Count: 3},
 		}
 	}
 	h := arpHandler(provider)
@@ -68,7 +68,7 @@ func TestArpHandler(t *testing.T) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
 	e := body.Entries[0]
-	if e.IP != "10.0.0.1" || e.MAC != "aa:bb:cc:dd:ee:ff" || e.Count != 3 || e.Name != "gw.local" {
+	if e.IP != "10.0.0.1" || e.MAC != "aa:bb:cc:dd:ee:ff" || e.Count != 3 || len(e.Names) != 1 || e.Names[0] != "gw.local" {
 		t.Fatalf("entry mismatch: %+v", e)
 	}
 }
