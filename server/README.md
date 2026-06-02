@@ -270,6 +270,7 @@ sudo go run main.go \
 Token authentication is **off by default**. When started with one or more tokens,
 the API requires a Bearer token; with no tokens it is fully open.
 
+Generate a token with `pingmon token` (it prints a random lowercase uuid4).
 Provide tokens via repeatable `--token` flags and/or a `.env` file:
 
 ```bash
@@ -364,6 +365,9 @@ as `minIntervalMs` in `GET /api/profile`.
 provisioning or inspecting a database offline.
 
 ```bash
+# Generate a random API token (prints the token only)
+pingmon token            # e.g. sudo pingmon --token "$(pingmon token)"
+
 # ARP (one-shot scan, no server)
 pingmon arp [--json] [--no-resolve]
 
