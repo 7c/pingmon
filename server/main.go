@@ -21,6 +21,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/7c/pingmon/classes/arp"
 	"github.com/7c/pingmon/classes/pinger"
 	"github.com/7c/pingmon/classes/rollup"
 	"github.com/7c/pingmon/classes/store"
@@ -53,9 +54,23 @@ func NewPingerManager(s *store.Store) *PingerManager {
 	}
 }
 
+// minPingIntervalMs is the server-enforced floor for a host's ping interval.
+// Any configured interval below this is clamped up. Set from
+// --min-ping-interval / .env minimum_ping_interval (default 500ms).
+var minPingIntervalMs = 500
+
+// clampConfig raises a config's interval to the enforced minimum. Returns a copy.
+func clampConfig(cfg store.HostConfig) store.HostConfig {
+	if cfg.IntervalMs < minPingIntervalMs {
+		cfg.IntervalMs = minPingIntervalMs
+	}
+	return cfg
+}
+
 // optionsFromConfig builds continuous pinger options from a stored per-host
-// config (durations in milliseconds).
+// config (durations in milliseconds), enforcing the minimum interval.
 func optionsFromConfig(cfg store.HostConfig) pinger.PingerOptions {
+	cfg = clampConfig(cfg)
 	return pinger.PingerOptions{
 		Timeout:  time.Duration(cfg.TimeoutMs) * time.Millisecond,
 		Count:    pinger.UnlimitedCount,
@@ -383,12 +398,14 @@ func (pm *PingerManager) handlePing(w http.ResponseWriter, r *http.Request) {
 func (pm *PingerManager) handleProfile(w http.ResponseWriter, r *http.Request) {
 	cfg := store.DefaultHostConfig()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"name":         serverName,
-		"service":      "pingmon",
-		"version":      appVersion,
-		"authRequired": authEnabled,
-		"readOnly":     readOnlyEnabled,
-		"serverTime":   time.Now().UTC(),
+		"name":          serverName,
+		"service":       "pingmon",
+		"version":       appVersion,
+		"authRequired":  authEnabled,
+		"readOnly":      readOnlyEnabled,
+		"arpScan":       arpEnabled,
+		"minIntervalMs": minPingIntervalMs,
+		"serverTime":    time.Now().UTC(),
 		"defaults": map[string]int{
 			"intervalMs": cfg.IntervalMs,
 			"timeoutMs":  cfg.TimeoutMs,
@@ -437,11 +454,13 @@ func (pm *PingerManager) handleCreateHost(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve config: provided values merged onto defaults, then validated.
+	// Resolve config: provided values merged onto defaults, clamped to the
+	// enforced minimum interval, then validated.
 	cfg := store.DefaultHostConfig()
 	if req.Config != nil {
 		cfg = *req.Config
 	}
+	cfg = clampConfig(cfg)
 	if msg := validateConfig(cfg); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": msg})
 		return
@@ -696,8 +715,14 @@ var (
 	debugFlag      = flag.Bool("debug", false, "Enable verbose debug logging (per-ping output, auth decisions, request/rollup detail)")
 	nameFlag       = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
 	readonlyFlag   = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
+	arpscanFlag    = flag.Bool("arpscan", false, "Enable periodic ARP scanning of all interfaces, exposed at GET /api/arp")
+	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (overrides .env arp_interval; default 1m)")
+	minPingFlag    = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (overrides .env minimum_ping_interval; default 500ms)")
 	tokenFlags     multiToken
 )
+
+// arpEnabled reports whether ARP scanning is on (exposed via /api/profile).
+var arpEnabled bool
 
 // serverName identifies this instance. It defaults to the OS hostname and can be
 // overridden with --name. It is exposed via GET /api/ping.
@@ -744,12 +769,11 @@ func checkRootPermissions() bool {
 	return currentUser.Uid == "0" // root has UID 0
 }
 
-func main() {
+// runServer parses the global flags and runs the HTTP/monitoring server. It is
+// the default action when no subcommand is given.
+func runServer() {
 	// Parse command-line flags
 	flag.Parse()
-
-	// Configure colorized, timestamped logging.
-	setupLogging()
 
 	// Resolve the instance name (flag overrides the hostname default).
 	if *nameFlag != "" {
@@ -762,6 +786,18 @@ func main() {
 
 	// Read-only mode (freeze writes / demo).
 	readOnlyEnabled = *readonlyFlag
+
+	// Load the .env file once for env-configurable settings.
+	env, _ := parseEnvFile(*envFileFlag)
+
+	// Enforced minimum ping interval (flag overrides .env, default 500ms).
+	minDur := *minPingFlag
+	if minDur <= 0 {
+		minDur = envDuration(env, "minimum_ping_interval", 500*time.Millisecond)
+	}
+	if ms := int(minDur / time.Millisecond); ms > 0 {
+		minPingIntervalMs = ms
+	}
 
 	// Check for root permissions
 	if !checkRootPermissions() {
@@ -802,6 +838,20 @@ func main() {
 	rl := rollup.New(st, *rollupFlag, *rawRetainFlag, *debugFlag)
 	rl.Start()
 
+	// Optionally start ARP scanning and expose it at GET /api/arp.
+	arpEnabled = *arpscanFlag
+	var arpScanner *arp.Scanner
+	var arpInterval time.Duration
+	if arpEnabled {
+		arpInterval = *arpIntervalF
+		if arpInterval <= 0 {
+			arpInterval = envDuration(env, "arp_interval", time.Minute)
+		}
+		arpScanner = arp.New(arpInterval)
+		arpScanner.Start()
+		r.HandleFunc("/api/arp", arpHandler(arpScanner.Entries)).Methods(http.MethodGet)
+	}
+
 	// This is an API-only server; the frontend is served separately. No root
 	// route is registered, so "/" and any other unmapped path return 404 (the
 	// service does not advertise itself to scanners). Liveness/identity are
@@ -832,6 +882,9 @@ func main() {
 
 		pm.StopAll()
 		rl.Stop()
+		if arpScanner != nil {
+			arpScanner.Stop()
+		}
 		if err := st.Close(); err != nil {
 			log.Printf("error closing store: %v", err)
 		}
@@ -851,11 +904,14 @@ func main() {
 		dataFolder:     dataFolder,
 		dbPath:         dbPath,
 		hostCount:      pm.Count(),
+		minIntervalMs:  minPingIntervalMs,
 		tokens:         tokens,
 		rawRetain:      *rawRetainFlag,
 		rollupInterval: *rollupFlag,
 		debug:          debugEnabled,
 		readOnly:       readOnlyEnabled,
+		arpScan:        arpEnabled,
+		arpInterval:    arpInterval,
 	})
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

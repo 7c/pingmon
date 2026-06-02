@@ -60,9 +60,11 @@ func TestCreateHostWithConfigAndFull(t *testing.T) {
 
 func TestCreateHostInvalidConfig(t *testing.T) {
 	r, _ := newTestServer(t)
+	// A too-small interval is clamped (not rejected); use an out-of-bounds
+	// timeout to exercise validation failure.
 	body := map[string]interface{}{
 		"ip":     testIP,
-		"config": map[string]int{"intervalMs": 10, "timeoutMs": 3000, "packetSize": 64}, // below min
+		"config": map[string]int{"intervalMs": 1000, "timeoutMs": 999999, "packetSize": 64}, // timeout too large
 	}
 	rec := do(t, r, http.MethodPost, "/api/hosts", body)
 	if rec.Code != http.StatusBadRequest {

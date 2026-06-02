@@ -70,8 +70,27 @@ by the multi-backend UI when registering this server as a backend.
   "version": "1.4.0",
   "authRequired": true,
   "readOnly": false,
+  "arpScan": true,
+  "minIntervalMs": 500,
   "serverTime": "2026-06-02T10:00:00Z",
   "defaults": { "intervalMs": 1000, "timeoutMs": 2000, "packetSize": 56 }
+}
+```
+
+### GET /api/arp
+Available only when started with `--arpscan`. Returns neighbors discovered across
+all interfaces, accumulated over every scan (`firstSeen`/`lastSeen`/`count`, never
+forgotten).
+
+**Response:**
+```json
+{
+  "count": 1,
+  "entries": [
+    { "ip": "192.168.1.1", "mac": "cc:28:aa:9c:22:00", "name": "router.lan",
+      "interface": "en0", "firstSeen": "2026-06-02T09:00:00Z",
+      "lastSeen": "2026-06-02T10:00:00Z", "count": 60 }
+  ]
 }
 ```
 
@@ -88,6 +107,47 @@ demo with realtime data that visitors cannot modify.
 ```bash
 sudo ./bin/pingmon --readonly
 ```
+
+## ARP discovery
+
+With `--arpscan`, the server periodically reads the OS ARP/neighbor table on all
+interfaces, resolves names (best-effort reverse DNS), and **accumulates** what it
+sees — entries are never forgotten. Each entry tracks `firstSeen`, `lastSeen`,
+and `count` (how many scans saw it); the latest MAC/interface is kept. Results
+are published at `GET /api/arp` as a helper for the UI.
+
+The scan interval comes from `.env` `arp_interval` (Go duration, default `1m`)
+or `--arp-interval`:
+
+```bash
+sudo ./bin/pingmon --arpscan --arp-interval 30s
+```
+
+On Linux it reads `/proc/net/arp`; on macOS/BSD it parses `arp -an`. (This reads
+the neighbor cache rather than actively probing.)
+
+## Minimum ping interval
+
+The server enforces a floor on per-host ping intervals: any configured interval
+below the minimum is silently **clamped up** (the stored/returned value reflects
+the enforced value, so the UI sees the truth). Default `500ms`, configurable via
+`.env` `minimum_ping_interval` or `--min-ping-interval`. The floor is advertised
+as `minIntervalMs` in `GET /api/profile`.
+
+## CLI commands
+
+`pingmon` runs the server by default, but also provides standalone commands
+(the command framework is built to grow):
+
+```bash
+pingmon arp                 # scan the ARP table on all interfaces and print it
+pingmon arp --json          # JSON output
+pingmon arp --no-resolve    # skip reverse-DNS lookups
+pingmon help                # list commands and flags
+```
+
+`pingmon arp` performs a one-shot scan without starting the server (no root
+needed for reading the ARP cache).
 
 ### GET /api/pinger
 Returns statistics for all running pingers.
@@ -250,6 +310,9 @@ sudo go run main.go \
 | `--datafolder` | `data` | Directory for persistent data (created if missing) |
 | `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
+| `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
+| `--arp-interval` | _(.env / 1m)_ | ARP scan interval (overrides `.env` `arp_interval`) |
+| `--min-ping-interval` | _(.env / 500ms)_ | Enforced minimum ping interval; lower values are clamped up (overrides `.env` `minimum_ping_interval`) |
 | `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
 | `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
 | `--token` | _(none)_ | Bearer token (lowercase uuid4) authorizing API access; **repeatable** |
@@ -318,6 +381,8 @@ The server uses the following default configuration:
 - **Rollup interval**: 5m (`--rollup-interval`)
 - **Static Files Directory**: `build`
 - **Default ping config**: interval 1s, timeout 2s, packet size 56 bytes (per-host, overridable)
+- **Minimum ping interval**: 500ms (`--min-ping-interval` / `.env` `minimum_ping_interval`)
+- **ARP scan**: off (`--arpscan`); interval `.env` `arp_interval` / `--arp-interval`, default 1m
 - **Number of Pings**: Continuous until stopped
 
 ## Security Considerations

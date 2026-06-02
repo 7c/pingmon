@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: PingMon Server API
-  version: 1.5.0
+  version: 1.6.0
   description: >
     REST API for the PingMon backend. PingMon monitors ICMP ping statistics for a
     set of hosts with per-host ping configuration, persists the host list and
@@ -28,6 +28,13 @@ info:
     UI up front. Used to freeze hosts/groups or run a public demo with realtime
     data.
 
+    ARP scanning: when started with `--arpscan`, the server periodically reads
+    the OS ARP/neighbor table on all interfaces (interval from `arp_interval` in
+    the .env file or `--arp-interval`, default 1m), accumulates what it sees
+    (first/last seen + count, never forgotten), and serves it at `GET /api/arp`.
+    That endpoint exists only when `--arpscan` is enabled; `/api/profile` reports
+    `arpScan`.
+
     CORS is fully open and not configurable: every response carries
     `Access-Control-Allow-Origin: *`, any method/header is allowed (the requested
     headers are echoed, covering `Authorization`), and preflight `OPTIONS` is
@@ -51,6 +58,7 @@ tags:
   - name: status
   - name: groups
   - name: annotations
+  - name: arp
   - name: legacy
 
 paths:
@@ -88,9 +96,11 @@ paths:
                 properties:
                   name: { type: string }
                   service: { type: string, example: pingmon }
-                  version: { type: string, example: 1.5.0 }
+                  version: { type: string, example: 1.6.0 }
                   authRequired: { type: boolean }
                   readOnly: { type: boolean, description: "True when the server runs in --readonly mode; writes return 423." }
+                  arpScan: { type: boolean, description: "True when ARP scanning is enabled (GET /api/arp available)." }
+                  minIntervalMs: { type: integer, description: "Server-enforced minimum ping interval; lower values are clamped up." }
                   serverTime: { type: string, format: date-time }
                   defaults:
                     type: object
@@ -397,6 +407,26 @@ paths:
                   generatedAt: { type: string, format: date-time }
                   hosts: { type: array, items: { $ref: "#/components/schemas/HostStatus" } }
 
+  /api/arp:
+    get:
+      summary: Accumulated ARP scan results (only when --arpscan is enabled)
+      description: >
+        Returns neighbors discovered across all interfaces, accumulated over all
+        scans (first/last seen + count). Available only when the server runs with
+        `--arpscan`; otherwise this route does not exist (404).
+      operationId: getArp
+      tags: [arp]
+      responses:
+        "200":
+          description: Discovered ARP entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  entries: { type: array, items: { $ref: "#/components/schemas/ArpEntry" } }
+
   /api/groups:
     get:
       summary: List groups
@@ -600,7 +630,7 @@ components:
     PingConfig:
       type: object
       properties:
-        intervalMs: { type: integer, description: "Ping interval (100..3600000)." }
+        intervalMs: { type: integer, description: "Ping interval in ms. Values below the server-enforced minimum (see /api/profile minIntervalMs, default 500) are clamped up." }
         timeoutMs: { type: integer, description: "Per-ping timeout (100..60000)." }
         packetSize: { type: integer, description: "Payload size in bytes (8..65500)." }
 
@@ -717,6 +747,17 @@ components:
         end: { type: string, format: date-time, nullable: true, description: "null = ongoing." }
         durationSec: { type: number, format: double }
         failCount: { type: integer }
+
+    ArpEntry:
+      type: object
+      properties:
+        ip: { type: string }
+        mac: { type: string, description: "Hardware (ARP) address; latest observed." }
+        name: { type: string, description: "Reverse-DNS name (best effort)." }
+        interface: { type: string }
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        count: { type: integer, description: "Number of scans this IP was seen in." }
 
     HostStatus:
       type: object

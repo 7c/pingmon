@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -39,46 +37,22 @@ func (m *multiToken) Set(v string) error {
 // not an error. Each value may be a comma-separated list, and the key may repeat
 // across lines. Every value is validated as a lowercase uuid4.
 func loadEnvTokens(path string) ([]string, error) {
-	f, err := os.Open(path)
+	env, err := parseEnvFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open env file %q: %w", path, err)
+		return nil, err
 	}
-	defer f.Close()
-
 	var tokens []string
-	sc := bufio.NewScanner(f)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(key), "token") {
-			continue
-		}
-		for _, raw := range strings.Split(value, ",") {
-			tok := strings.TrimSpace(raw)
-			tok = strings.Trim(tok, `"'`)
-			tok = strings.TrimSpace(tok)
-			if tok == "" {
+	for _, raw := range env["token"] {
+		for _, t := range strings.Split(raw, ",") {
+			t = strings.TrimSpace(t)
+			if t == "" {
 				continue
 			}
-			if !isValidUUID4Lower(tok) {
-				return nil, fmt.Errorf("%s:%d: token must be a lowercase uuid4, got %q", path, lineNo, tok)
+			if !isValidUUID4Lower(t) {
+				return nil, fmt.Errorf("token in %q must be a lowercase uuid4, got %q", path, t)
 			}
-			tokens = append(tokens, tok)
+			tokens = append(tokens, t)
 		}
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("read env file %q: %w", path, err)
 	}
 	return tokens, nil
 }

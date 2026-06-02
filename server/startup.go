@@ -16,11 +16,14 @@ type startupInfo struct {
 	dataFolder     string
 	dbPath         string
 	hostCount      int
+	minIntervalMs  int
 	tokens         []string
 	rawRetain      time.Duration
 	rollupInterval time.Duration
 	debug          bool
 	readOnly       bool
+	arpScan        bool
+	arpInterval    time.Duration
 }
 
 // printStartupOverview prints a colorized at-a-glance summary to stdout. Colors
@@ -50,6 +53,7 @@ func printStartupOverview(info startupInfo) {
 	row("data", val(info.dataFolder))
 	row("database", val(info.dbPath))
 	row("hosts", val(fmt.Sprintf("%d monitored", info.hostCount)))
+	row("min interval", val(fmt.Sprintf("%dms", info.minIntervalMs)))
 
 	// Auth.
 	if len(info.tokens) == 0 {
@@ -63,6 +67,12 @@ func printStartupOverview(info startupInfo) {
 	}
 
 	row("cors", val("fully open (any origin)"))
+
+	if info.arpScan {
+		row("arpscan", on(fmt.Sprintf("on (every %s)", info.arpInterval)))
+	} else {
+		row("arpscan", off("off"))
+	}
 
 	retain := "forever"
 	if info.rawRetain > 0 {

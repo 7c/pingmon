@@ -8,7 +8,7 @@ import (
 )
 
 // appVersion mirrors the API version documented in openapi.yml.
-const appVersion = "1.5.0"
+const appVersion = "1.6.0"
 
 // usageExample is a documented example invocation shown in --help.
 type usageExample struct {
@@ -43,8 +43,17 @@ func printUsage() {
 	fmt.Fprintln(out)
 
 	fmt.Fprintln(out, header("USAGE"))
-	fmt.Fprintf(out, "  %s [flags]\n\n", "pingmon")
+	fmt.Fprintf(out, "  %s [flags]            run the server (default)\n", "pingmon")
+	fmt.Fprintf(out, "  %s <command> [args]   run a CLI command\n\n", "pingmon")
 	fmt.Fprintf(out, "  %s\n\n", dim("Requires root/administrator privileges for ICMP."))
+
+	if len(commandRegistry) > 0 {
+		fmt.Fprintln(out, header("COMMANDS"))
+		for _, c := range commandRegistry {
+			fmt.Fprintf(out, "  %s\n      %s\n", flagName(c.name), c.summary)
+		}
+		fmt.Fprintln(out)
+	}
 
 	fmt.Fprintln(out, header("FLAGS"))
 	flag.CommandLine.VisitAll(func(f *flag.Flag) {

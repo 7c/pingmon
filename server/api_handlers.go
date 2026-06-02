@@ -9,11 +9,24 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/7c/pingmon/classes/arp"
 	"github.com/7c/pingmon/classes/store"
 )
 
 // maxCompareIPs caps how many hosts a single multi-series request may fetch.
 const maxCompareIPs = 25
+
+// arpHandler serves the accumulated ARP scan results. The provider returns the
+// current snapshot (the scanner's Entries method).
+func arpHandler(provider func() []arp.Entry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entries := provider()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"count":   len(entries),
+			"entries": entries,
+		})
+	}
+}
 
 // --- request helpers ---
 
@@ -96,6 +109,7 @@ func (pm *PingerManager) handleUpdateConfig(w http.ResponseWriter, r *http.Reque
 		badRequest(w, err.Error())
 		return
 	}
+	cfg = clampConfig(cfg) // enforce the minimum ping interval
 	if msg := validateConfig(cfg); msg != "" {
 		badRequest(w, msg)
 		return
