@@ -13,6 +13,20 @@ import (
 	"time"
 )
 
+// debugEnabled gates the high-frequency per-ping log output. It is off by
+// default (lifecycle events are still logged); enable it via SetDebug.
+var debugEnabled bool
+
+// SetDebug toggles verbose per-ping logging for the whole package.
+func SetDebug(v bool) { debugEnabled = v }
+
+// dbgf logs only when debug logging is enabled.
+func dbgf(format string, args ...interface{}) {
+	if debugEnabled {
+		log.Printf(format, args...)
+	}
+}
+
 // Constants for ICMP packet
 const (
 	icmpEchoRequest = 8
@@ -46,13 +60,19 @@ var (
 
 // PingResult contains the result of a single ping operation
 type PingResult struct {
-	Host    string
-	IPAddr  *net.IPAddr
-	RTT     time.Duration
-	Success bool
-	Error   error
-	Seq     int // Sequence number of this ping
+	Host      string
+	IPAddr    *net.IPAddr
+	RTT       time.Duration
+	Success   bool
+	Error     error
+	Seq       int       // Sequence number of this ping
+	Timestamp time.Time // When the ping was sent
 }
+
+// ResultHandler is invoked once for every completed ping result. It is called
+// from the ping goroutine outside of the pinger's lock, so handlers must not
+// call back into the pinger and should avoid long-running work.
+type ResultHandler func(PingResult)
 
 // Stats contains statistics for ping results
 type Stats struct {
@@ -108,6 +128,15 @@ type Pinger struct {
 	results   []PingResult  // All ping results
 	done      chan struct{} // Signal to stop pinging
 	running   bool          // Whether pinger is currently running
+	onResult  ResultHandler // Optional callback for each completed result
+}
+
+// SetResultHandler registers a callback invoked for every completed ping
+// result. Passing nil clears the handler. Safe to call while running.
+func (p *Pinger) SetResultHandler(h ResultHandler) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.onResult = h
 }
 
 // NewPinger creates a new Pinger for a single host with default options
@@ -221,13 +250,14 @@ func (p *Pinger) sendPing() PingResult {
 	timeout := p.Timeout
 	p.mutex.RUnlock()
 
-	log.Printf("[PING] Sending ping #%d to %s (%s) with timeout %v", seq, host, ipAddr, timeout)
+	dbgf("[PING] Sending ping #%d to %s (%s) with timeout %v", seq, host, ipAddr, timeout)
 
 	result := PingResult{
-		Host:    host,
-		IPAddr:  ipAddr,
-		Success: false,
-		Seq:     seq,
+		Host:      host,
+		IPAddr:    ipAddr,
+		Success:   false,
+		Seq:       seq,
+		Timestamp: time.Now(),
 	}
 
 	// Create a connection
@@ -305,7 +335,6 @@ func (p *Pinger) sendPing() PingResult {
 // addResult safely adds a result to the results slice
 func (p *Pinger) addResult(result PingResult) {
 	p.mutex.Lock()
-	defer p.mutex.Unlock()
 
 	// Add new result
 	p.results = append(p.results, result)
@@ -316,6 +345,15 @@ func (p *Pinger) addResult(result PingResult) {
 	}
 
 	p.seq++
+
+	// Capture the handler under the lock, but invoke it after releasing so a
+	// slow handler (e.g. disk I/O) never blocks readers of the stats.
+	handler := p.onResult
+	p.mutex.Unlock()
+
+	if handler != nil {
+		handler(result)
+	}
 }
 
 // IsRunning returns whether the pinger is currently running
@@ -357,11 +395,11 @@ func (p *Pinger) pingLoop() {
 		// Send a ping
 		result := p.sendPing()
 
-		// Log the result
+		// Log the result (verbose; debug only)
 		if result.Success {
-			log.Printf("[PING] #%d to %s successful - RTT: %v", result.Seq, result.Host, result.RTT)
+			dbgf("[PING] #%d to %s successful - RTT: %v", result.Seq, result.Host, result.RTT)
 		} else {
-			log.Printf("[PING] #%d to %s failed - Error: %v", result.Seq, result.Host, result.Error)
+			dbgf("[PING] #%d to %s failed - Error: %v", result.Seq, result.Host, result.Error)
 		}
 
 		// Add the result
@@ -384,7 +422,7 @@ func (p *Pinger) Run() {
 	// Check if already running
 	if p.running {
 		p.mutex.Unlock()
-		log.Printf("[PING] Pinger for %s is already running, ignoring Run() call", p.host)
+		dbgf("[PING] Pinger for %s is already running, ignoring Run() call", p.host)
 		return
 	}
 
@@ -420,7 +458,7 @@ func (p *Pinger) Stop() {
 		log.Printf("[PING] Stopping pinger for %s", p.host)
 		close(p.done)
 	} else {
-		log.Printf("[PING] Pinger for %s is not running, ignoring Stop() call", p.host)
+		dbgf("[PING] Pinger for %s is not running, ignoring Stop() call", p.host)
 	}
 
 	p.mutex.Unlock()
@@ -495,8 +533,8 @@ func (p *Pinger) GetStatistics() Stats {
 	}
 	stats.Loss = packetLoss
 
-	// Log the statistics
-	log.Printf("[PING-STATS] %s: sent=%d received=%d loss=%.2f%% min=%v avg=%v max=%v",
+	// Log the statistics (verbose; debug only)
+	dbgf("[PING-STATS] %s: sent=%d received=%d loss=%.2f%% min=%v avg=%v max=%v",
 		p.host, stats.Sent, stats.Received, packetLoss*100, stats.MinRTT, stats.AvgRTT, stats.MaxRTT)
 
 	// Calculate RTT statistics based on stored RTTs (which may be capped)

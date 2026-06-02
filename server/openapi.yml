@@ -1,0 +1,791 @@
+openapi: 3.0.3
+info:
+  title: PingMon Server API
+  version: 1.4.0
+  description: >
+    REST API for the PingMon backend. PingMon monitors ICMP ping statistics for a
+    set of hosts with per-host ping configuration, persists the host list and
+    every ping result to SQLite, rolls raw results up into hourly/daily summaries
+    for long-term analysis, and supports groups, comments/annotations, alert
+    thresholds, and derived analytics (availability, percentiles, outages).
+
+    RTT values are nanoseconds unless a field name says otherwise. Timestamps are
+    RFC3339 (UTC). Range queries accept `start`/`end` (RFC3339) and a
+    `resolution` of raw|minute|hour|day|auto.
+
+    Authentication is OPTIONAL. When the server is started with one or more
+    tokens (`--token <uuid4>` repeatable, and/or `token=` in a .env file), every
+    `/api/*` endpoint EXCEPT `GET /api/ping` and `GET /api/profile` requires
+    `Authorization: Bearer <token>`. Unauthorized or missing-token requests to
+    protected endpoints return **403 Forbidden**; **404** is reserved for
+    genuinely non-existent routes. With no tokens configured the API is fully
+    open.
+
+    CORS is fully open and not configurable: every response carries
+    `Access-Control-Allow-Origin: *`, any method/header is allowed (the requested
+    headers are echoed, covering `Authorization`), and preflight `OPTIONS` is
+    answered — so a browser UI on any origin can connect to arbitrarily-registered
+    backend URLs.
+servers:
+  - url: http://localhost:6868
+    description: Local development server (default port)
+
+# Only enforced when the server is started with tokens; GET /api/ping overrides
+# this with `security: []` and is always public.
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+  - name: stats
+  - name: hosts
+  - name: series
+  - name: analytics
+  - name: status
+  - name: groups
+  - name: annotations
+  - name: legacy
+
+paths:
+  /api/ping:
+    get:
+      summary: Public health check (never requires authentication)
+      operationId: ping
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  name: { type: string, description: "Instance name (--name flag, defaults to OS hostname).", example: ping-eu-1 }
+
+  /api/profile:
+    get:
+      summary: Public instance metadata and defaults (never requires auth)
+      description: Used by the multi-backend UI when registering a server.
+      operationId: profile
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Instance metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  service: { type: string, example: pingmon }
+                  version: { type: string, example: 1.4.0 }
+                  authRequired: { type: boolean }
+                  serverTime: { type: string, format: date-time }
+                  defaults:
+                    type: object
+                    properties:
+                      intervalMs: { type: integer }
+                      timeoutMs: { type: integer }
+                      packetSize: { type: integer }
+
+  /api/pinger:
+    get:
+      summary: Live in-memory statistics for all monitored hosts
+      operationId: getStats
+      tags: [stats]
+      responses:
+        "200":
+          description: Map of IP to current statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/EnhancedStats" }
+
+  /api/hosts:
+    get:
+      summary: List monitored IPs
+      operationId: listHosts
+      tags: [hosts]
+      responses:
+        "200":
+          description: The list of monitored IPs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ips: { type: array, items: { type: string } }
+                required: [ips]
+    post:
+      summary: Add monitored host(s) with optional config and metadata
+      operationId: createHost
+      tags: [hosts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateHostRequest" }
+      responses:
+        "201": { description: All hosts added., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "206": { description: Some hosts could not be added., content: { application/json: { schema: { $ref: "#/components/schemas/PartialResponse" } } } }
+        "400": { description: No IP provided or invalid config/body., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/full:
+    get:
+      summary: List monitored hosts with full metadata (config, tags, groups)
+      operationId: listHostsFull
+      tags: [hosts]
+      responses:
+        "200":
+          description: Hosts with metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hosts: { type: array, items: { $ref: "#/components/schemas/Host" } }
+                required: [hosts]
+
+  /api/hosts/{ip}:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    get:
+      summary: Get a single host's full record
+      operationId: getHost
+      tags: [hosts]
+      responses:
+        "200": { description: The host., content: { application/json: { schema: { $ref: "#/components/schemas/Host" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+    delete:
+      summary: Stop monitoring a host (history retained)
+      operationId: deleteHost
+      tags: [hosts]
+      responses:
+        "200": { description: Removed., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+  /api/hosts/{ip}/config:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    put:
+      summary: Update per-host ping config (restarts the pinger)
+      operationId: updateHostConfig
+      tags: [hosts]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PingConfig" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "400": { description: Out-of-bounds config., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/meta:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    put:
+      summary: Update display name, notes, and tags
+      operationId: updateHostMeta
+      tags: [hosts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string }
+                notes: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/alerts:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    put:
+      summary: Update alert thresholds (0 disables)
+      operationId: updateHostAlerts
+      tags: [hosts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                latencyMs: { type: integer }
+                lossPct: { type: number, format: double }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "400": { description: Invalid values., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/reset:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    post:
+      summary: Reset in-memory stats (config preserved)
+      operationId: resetHost
+      tags: [hosts]
+      responses:
+        "200": { description: Reset., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+  /api/hosts/{ip}/history:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    get:
+      summary: Get raw history or an aggregated series for one host
+      description: >
+        With `limit` only, returns the legacy {ip,count,results} shape. With any
+        of `start`/`end`/`resolution`, returns an aggregated Series.
+      operationId: getHistory
+      tags: [hosts, series]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+        - { $ref: "#/components/parameters/StartQuery" }
+        - { $ref: "#/components/parameters/EndQuery" }
+        - { $ref: "#/components/parameters/ResolutionQuery" }
+      responses:
+        "200":
+          description: Raw results or an aggregated Series.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Series"
+                  - type: object
+                    properties:
+                      ip: { type: string }
+                      count: { type: integer }
+                      results: { type: array, items: { $ref: "#/components/schemas/Result" } }
+        "400": { description: Invalid range., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/availability:
+    parameters: [ { $ref: "#/components/parameters/IpPath" }, { $ref: "#/components/parameters/StartQuery" }, { $ref: "#/components/parameters/EndQuery" } ]
+    get:
+      summary: Uptime/availability over a range
+      operationId: getAvailability
+      tags: [analytics]
+      responses:
+        "200": { description: Availability., content: { application/json: { schema: { $ref: "#/components/schemas/Availability" } } } }
+        "400": { description: Invalid range., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/percentiles:
+    parameters: [ { $ref: "#/components/parameters/IpPath" }, { $ref: "#/components/parameters/StartQuery" }, { $ref: "#/components/parameters/EndQuery" } ]
+    get:
+      summary: RTT percentiles (p50/p95/p99) and jitter over a range
+      operationId: getPercentiles
+      tags: [analytics]
+      responses:
+        "200": { description: Percentiles., content: { application/json: { schema: { $ref: "#/components/schemas/Percentiles" } } } }
+        "400": { description: Invalid range., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/outages:
+    parameters:
+      - { $ref: "#/components/parameters/IpPath" }
+      - { $ref: "#/components/parameters/StartQuery" }
+      - { $ref: "#/components/parameters/EndQuery" }
+      - { name: minFails, in: query, description: "Min consecutive failures to count as an outage (default 3).", schema: { type: integer } }
+    get:
+      summary: Detected outage periods over a range
+      operationId: getOutages
+      tags: [analytics]
+      responses:
+        "200":
+          description: Outages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ip: { type: string }
+                  outages: { type: array, items: { $ref: "#/components/schemas/Outage" } }
+        "400": { description: Invalid range., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/hosts/{ip}/annotations:
+    parameters: [ { $ref: "#/components/parameters/IpPath" } ]
+    get:
+      summary: List annotations overlapping a range
+      operationId: listAnnotations
+      tags: [annotations]
+      parameters:
+        - { $ref: "#/components/parameters/StartQuery" }
+        - { $ref: "#/components/parameters/EndQuery" }
+        - { name: type, in: query, description: "Comma-separated types to filter (comment,incident,maintenance).", schema: { type: string } }
+      responses:
+        "200":
+          description: Annotations.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annotations: { type: array, items: { $ref: "#/components/schemas/Annotation" } }
+    post:
+      summary: Create an annotation for a host
+      operationId: createAnnotation
+      tags: [annotations]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AnnotationRequest" } } }
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/Annotation" } } } }
+        "400": { description: Missing/invalid fields., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/annotations/{id}:
+    parameters: [ { $ref: "#/components/parameters/AnnotationIdPath" } ]
+    put:
+      summary: Update an annotation
+      operationId: updateAnnotation
+      tags: [annotations]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AnnotationRequest" } } }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+    delete:
+      summary: Delete an annotation
+      operationId: deleteAnnotation
+      tags: [annotations]
+      responses:
+        "200": { description: Deleted., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/series:
+    get:
+      summary: Aggregated series for several hosts (overlay)
+      operationId: getMultiSeries
+      tags: [series]
+      parameters:
+        - { name: ips, in: query, required: true, description: "Comma-separated IPs (max 25).", schema: { type: string } }
+        - { $ref: "#/components/parameters/StartQuery" }
+        - { $ref: "#/components/parameters/EndQuery" }
+        - { $ref: "#/components/parameters/ResolutionQuery" }
+      responses:
+        "200":
+          description: Series per host.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  series: { type: array, items: { $ref: "#/components/schemas/Series" } }
+        "400": { description: Missing ips or invalid range., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/status:
+    get:
+      summary: Current health snapshot for all hosts (NOC wall)
+      operationId: getStatus
+      tags: [status]
+      parameters:
+        - { name: n, in: query, description: "Sparkline / window size (default 60).", schema: { type: integer } }
+      responses:
+        "200":
+          description: Per-host status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generatedAt: { type: string, format: date-time }
+                  hosts: { type: array, items: { $ref: "#/components/schemas/HostStatus" } }
+
+  /api/groups:
+    get:
+      summary: List groups
+      operationId: listGroups
+      tags: [groups]
+      responses:
+        "200":
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups: { type: array, items: { $ref: "#/components/schemas/Group" } }
+    post:
+      summary: Create a group
+      operationId: createGroup
+      tags: [groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                color: { type: string }
+                description: { type: string }
+              required: [name]
+      responses:
+        "201": { description: Created., content: { application/json: { schema: { $ref: "#/components/schemas/Group" } } } }
+        "400": { description: Missing name., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+        "409": { description: Name already exists., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/groups/{id}:
+    parameters: [ { $ref: "#/components/parameters/GroupIdPath" } ]
+    get:
+      summary: Get a group
+      operationId: getGroup
+      tags: [groups]
+      responses:
+        "200": { description: The group., content: { application/json: { schema: { $ref: "#/components/schemas/Group" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+    put:
+      summary: Update a group
+      operationId: updateGroup
+      tags: [groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                color: { type: string }
+                description: { type: string }
+      responses:
+        "200": { description: Updated., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+    delete:
+      summary: Delete a group
+      operationId: deleteGroup
+      tags: [groups]
+      responses:
+        "200": { description: Deleted., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "404": { description: Not found., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+
+  /api/groups/{id}/hosts:
+    parameters: [ { $ref: "#/components/parameters/GroupIdPath" } ]
+    get:
+      summary: List hosts in a group
+      operationId: listGroupHosts
+      tags: [groups]
+      responses:
+        "200":
+          description: IPs in the group.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ips: { type: array, items: { type: string } }
+    post:
+      summary: Assign host(s) to a group
+      operationId: assignGroupHosts
+      tags: [groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ip: { type: string }
+                ips: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Assigned., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+  /api/groups/{id}/hosts/{ip}:
+    parameters: [ { $ref: "#/components/parameters/GroupIdPath" }, { $ref: "#/components/parameters/IpPath" } ]
+    delete:
+      summary: Remove a host from a group
+      operationId: unassignGroupHost
+      tags: [groups]
+      responses:
+        "200": { description: Unassigned., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+  /api/groups/{id}/health:
+    parameters: [ { $ref: "#/components/parameters/GroupIdPath" } ]
+    get:
+      summary: Aggregate health rollup for a group
+      operationId: getGroupHealth
+      tags: [groups]
+      responses:
+        "200":
+          description: Group health.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groupId: { type: integer }
+                  counts: { type: object, additionalProperties: { type: integer } }
+                  avgLossPct: { type: number, format: double }
+                  avgRttNs: { type: number, format: double }
+
+  /api/pinger/add:
+    post:
+      summary: Add pinger(s) (legacy)
+      operationId: addPingerLegacy
+      tags: [legacy]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IpsRequest" } } } }
+      responses:
+        "200": { description: Added., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+        "206": { description: Partial., content: { application/json: { schema: { $ref: "#/components/schemas/PartialResponse" } } } }
+
+  /api/pinger/reset:
+    post:
+      summary: Reset pinger(s) (legacy)
+      operationId: resetPingerLegacy
+      tags: [legacy]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IpsRequest" } } } }
+      responses:
+        "200": { description: Reset., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+  /api/pinger/remove:
+    post:
+      summary: Remove pinger(s) (legacy)
+      operationId: removePingerLegacy
+      tags: [legacy]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IpsRequest" } } } }
+      responses:
+        "200": { description: Removed., content: { application/json: { schema: { $ref: "#/components/schemas/SuccessResponse" } } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: uuid4
+      description: >
+        A lowercase uuid4 token supplied via `Authorization: Bearer <token>`.
+        Only enforced when the server is started with at least one token.
+        Unauthorized requests to protected endpoints return 403 Forbidden.
+
+  parameters:
+    IpPath:
+      name: ip
+      in: path
+      required: true
+      description: Target IP address or hostname.
+      schema: { type: string }
+    GroupIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    AnnotationIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    StartQuery:
+      name: start
+      in: query
+      description: Range start (RFC3339). Defaults to end-6h.
+      schema: { type: string, format: date-time }
+    EndQuery:
+      name: end
+      in: query
+      description: Range end (RFC3339). Defaults to now.
+      schema: { type: string, format: date-time }
+    ResolutionQuery:
+      name: resolution
+      in: query
+      description: Bucket resolution.
+      schema: { type: string, enum: [raw, minute, hour, day, auto] }
+
+  schemas:
+    PingConfig:
+      type: object
+      properties:
+        intervalMs: { type: integer, description: "Ping interval (100..3600000)." }
+        timeoutMs: { type: integer, description: "Per-ping timeout (100..60000)." }
+        packetSize: { type: integer, description: "Payload size in bytes (8..65500)." }
+
+    CreateHostRequest:
+      type: object
+      description: Provide `ip`, `ips`, or both, plus optional config/metadata applied to all.
+      properties:
+        ip: { type: string }
+        ips: { type: array, items: { type: string } }
+        config: { $ref: "#/components/schemas/PingConfig" }
+        displayName: { type: string }
+        tags: { type: array, items: { type: string } }
+        notes: { type: string }
+
+    Host:
+      type: object
+      properties:
+        ip: { type: string }
+        addedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        displayName: { type: string }
+        notes: { type: string }
+        tags: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: integer, format: int64 } }
+        config: { $ref: "#/components/schemas/PingConfig" }
+        alertLatencyMs: { type: integer }
+        alertLossPct: { type: number, format: double }
+
+    Group:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        color: { type: string }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Annotation:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        ip: { type: string, nullable: true }
+        type: { type: string, enum: [comment, incident, maintenance] }
+        title: { type: string }
+        text: { type: string }
+        color: { type: string }
+        author: { type: string }
+        startTs: { type: string, format: date-time }
+        endTs: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AnnotationRequest:
+      type: object
+      properties:
+        type: { type: string, enum: [comment, incident, maintenance] }
+        title: { type: string }
+        text: { type: string }
+        color: { type: string }
+        author: { type: string }
+        startTs: { type: string, format: date-time }
+        endTs: { type: string, format: date-time, nullable: true }
+      required: [startTs]
+
+    Bucket:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        sent: { type: integer }
+        received: { type: integer }
+        lossPct: { type: number, format: double }
+        minRttNs: { type: integer, format: int64 }
+        avgRttNs: { type: integer, format: int64 }
+        maxRttNs: { type: integer, format: int64 }
+        p50RttNs: { type: integer, format: int64, description: "0 at hour/day resolution." }
+        p95RttNs: { type: integer, format: int64 }
+        p99RttNs: { type: integer, format: int64, description: "0 at hour/day resolution." }
+        jitterNs: { type: integer, format: int64, description: "0 at hour/day resolution." }
+
+    Series:
+      type: object
+      properties:
+        ip: { type: string }
+        resolution: { type: string, enum: [raw, minute, hour, day] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        buckets: { type: array, items: { $ref: "#/components/schemas/Bucket" } }
+
+    Availability:
+      type: object
+      properties:
+        ip: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        sent: { type: integer }
+        received: { type: integer }
+        uptimePct: { type: number, format: double }
+
+    Percentiles:
+      type: object
+      properties:
+        ip: { type: string }
+        count: { type: integer }
+        p50Ns: { type: integer, format: int64 }
+        p95Ns: { type: integer, format: int64 }
+        p99Ns: { type: integer, format: int64 }
+        jitterNs: { type: integer, format: int64 }
+
+    Outage:
+      type: object
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time, nullable: true, description: "null = ongoing." }
+        durationSec: { type: number, format: double }
+        failCount: { type: integer }
+
+    HostStatus:
+      type: object
+      properties:
+        ip: { type: string }
+        displayName: { type: string }
+        state: { type: string, enum: [up, degraded, down, unknown] }
+        lastRttNs: { type: integer, format: int64, nullable: true }
+        avgRttNs: { type: integer, format: int64, nullable: true }
+        lossPct: { type: number, format: double }
+        jitterNs: { type: integer, format: int64, nullable: true }
+        uptimePct: { type: number, format: double }
+        lastSeen: { type: string, format: date-time, nullable: true }
+        breaches: { type: array, items: { type: string } }
+        sparkline:
+          type: array
+          items: { type: integer, format: int64, nullable: true }
+          description: RTT (ns) per recent ping, oldest first; null = failed/missing.
+        groups: { type: array, items: { type: integer, format: int64 } }
+
+    Result:
+      type: object
+      properties:
+        ip: { type: string }
+        seq: { type: integer }
+        timestamp: { type: string, format: date-time }
+        success: { type: boolean }
+        rttNanos: { type: integer, format: int64 }
+        errMsg: { type: string }
+      required: [ip, seq, timestamp, success, rttNanos]
+
+    ErrorInfo:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        message: { type: string }
+
+    EnhancedStats:
+      type: object
+      description: Live, in-memory statistics for a monitored host.
+      properties:
+        Host: { type: string }
+        StartTime: { type: string, format: date-time }
+        LastUpdate: { type: string, format: date-time }
+        Sent: { type: integer }
+        Received: { type: integer }
+        Loss: { type: number, format: double, description: "Fraction 0..1." }
+        MinRTT: { type: integer, format: int64 }
+        MaxRTT: { type: integer, format: int64 }
+        AvgRTT: { type: integer, format: int64 }
+        StdDevRTT: { type: integer, format: int64 }
+        SuccessRTT: { type: array, items: { type: integer, format: int64 } }
+        ErrorsCount: { type: integer }
+        Running: { type: boolean }
+        errorEvents: { type: array, items: { $ref: "#/components/schemas/ErrorInfo" } }
+
+    IpsRequest:
+      type: object
+      properties:
+        ips: { type: array, items: { type: string } }
+      required: [ips]
+
+    SuccessResponse:
+      type: object
+      properties: { success: { type: boolean, example: true } }
+      required: [success]
+
+    PartialResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        errors: { type: object, additionalProperties: { type: string } }
+      required: [success, errors]
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error: { type: string }
+      required: [success, error]

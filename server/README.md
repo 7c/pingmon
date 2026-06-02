@@ -4,7 +4,7 @@ The backend server component of the PingMon application.
 
 ## Overview
 
-The server is a Go application that handles ICMP ping operations to multiple hosts simultaneously and provides a RESTful API for the frontend. It manages ping operations, collects statistics, and serves the React frontend as a static single-page application.
+The server is a standalone Go application that handles ICMP ping operations to multiple hosts simultaneously and provides a RESTful API. It manages ping operations, collects and aggregates statistics, and persists everything to SQLite. It is **API-only** — the frontend is a separate application served independently (the server does not bundle or serve any static UI).
 
 ## Architecture
 
@@ -12,16 +12,67 @@ The server uses a manager pattern to handle multiple ping operations:
 
 - **PingerManager**: Coordinates all active ping operations
 - **Pinger Class**: Encapsulates ping functionality for a single host
-- **REST API**: Provides endpoints for frontend interactions
-- **Static File Server**: Serves the compiled React frontend
+- **Store**: SQLite-backed persistence for hosts, results, rollups, groups, and annotations
+- **Rollup job**: Background aggregation of raw results into hourly/daily summaries
+- **REST API**: The server's only surface; consumed by the separately-deployed frontend or any client
+
+## Persistence & long-term analysis
+
+The server persists state to a SQLite database (default `pingmon.db`, configurable
+via `--db`):
+
+- **Monitored hosts** are remembered with **per-host config** (interval, timeout, packet size), display name, tags, notes, and alert thresholds — the server resumes pinging each at its configured interval after a restart.
+- **Every ping result** (success/failure, RTT, timestamp, error) is stored long-term. Results are written asynchronously in batches so the ping loop never blocks on disk.
+- **Tiered rollups**: a background job aggregates raw results into `ping_rollup_hourly` and `ping_rollup_daily` (min/avg/max/p95, sent/received). Range queries pick raw/hour/day automatically by span, so charts stay fast over months of data.
+- **Retention**: raw results older than `--raw-retain` (default 720h; `0` = keep forever) are pruned, but never beyond what has been rolled up — hourly/daily summaries are kept indefinitely.
+- **Groups, tags, and annotations** (comments / incidents / maintenance windows) are persisted. Removing a host retains its historical results and annotations.
+
+### Feature summary
+
+- Per-IP ping period/config, updatable live (`PUT /api/hosts/{ip}/config`)
+- Aggregated time-series for one host (`GET /api/hosts/{ip}/history?start&end&resolution`) or many (`GET /api/series?ips=…`) for overlay charts
+- Derived analytics: availability, percentiles (p50/p95/p99) + jitter, outage detection
+- NOC status wall snapshot (`GET /api/status`) with per-host state, sparkline, and breaches
+- Host groups with aggregate health; comments/annotations pinned to time points/ranges
+- Optional Bearer-token API authentication (see [Authentication](#authentication-optional))
+
+**The complete, authoritative API contract is in [openapi.yml](./openapi.yml)** (v1.3.0).
+The endpoint summaries below cover the most common operations.
 
 ## Prerequisites
 
-- **Go 1.18+** 
+- **Go 1.21+** (the module declares `go 1.25`; Go 1.21+ fetches the required toolchain automatically)
 - **Root/Administrator privileges** (required for ICMP operations)
-- The client application must be built and its output placed in the `build` directory
+
+No frontend build is required — the server runs API-only.
 
 ## API Endpoints
+
+### GET /api/ping
+Public health check — always reachable, **never requires authentication**.
+Reports the server's name (the `--name` flag, defaulting to the OS hostname) so
+clients can identify the instance.
+
+**Response:**
+```json
+{ "status": "ok", "name": "ping-eu-1" }
+```
+
+### GET /api/profile
+Public instance metadata and defaults — **never requires authentication**. Used
+by the multi-backend UI when registering this server as a backend.
+
+**Response:**
+```json
+{
+  "name": "ping-eu-1",
+  "service": "pingmon",
+  "version": "1.4.0",
+  "authRequired": true,
+  "serverTime": "2026-06-02T10:00:00Z",
+  "defaults": { "intervalMs": 1000, "timeoutMs": 2000, "packetSize": 56 }
+}
+```
 
 ### GET /api/pinger
 Returns statistics for all running pingers.
@@ -43,8 +94,80 @@ Returns statistics for all running pingers.
 }
 ```
 
-### POST /api/pinger/add
-Adds new IPs to monitor.
+### Hosts (CRUD)
+
+A RESTful resource for managing monitored IPs. These are the preferred
+endpoints; the `/api/pinger/*` routes below are kept for the existing frontend.
+
+#### GET /api/hosts
+Lists the IPs currently being monitored (Read).
+
+**Response:**
+```json
+{
+  "ips": ["192.168.1.1", "8.8.8.8"]
+}
+```
+
+#### POST /api/hosts
+Adds one or more IPs to monitor (Create). Accepts a single `ip`, a list of
+`ips`, or both. Returns `201` on success, or `206` with a per-IP `errors` map
+when some IPs could not be added.
+
+**Request:**
+```json
+{
+  "ips": ["192.168.1.1", "8.8.8.8"]
+}
+```
+
+#### DELETE /api/hosts/{ip}
+Stops monitoring an IP and removes it from the persisted host list (Delete).
+Historical results are retained.
+
+#### POST /api/hosts/{ip}/reset
+Resets the in-memory statistics for an IP (Update).
+
+#### GET /api/hosts/{ip}/history
+Returns persisted ping results for an IP, newest first. With `?limit=N` only
+(default 1000), returns raw results. With `?start=&end=&resolution=raw|minute|hour|day|auto`,
+returns an aggregated **Series** of time buckets instead.
+
+**Raw response:**
+```json
+{
+  "ip": "8.8.8.8",
+  "count": 2,
+  "results": [
+    { "ip": "8.8.8.8", "seq": 41, "timestamp": "2026-06-02T10:00:01Z", "success": true, "rttNanos": 12345678 },
+    { "ip": "8.8.8.8", "seq": 40, "timestamp": "2026-06-02T10:00:00Z", "success": false, "rttNanos": 0, "errMsg": "error reading response: i/o timeout" }
+  ]
+}
+```
+
+### Extended endpoints (v1.2)
+
+See [openapi.yml](./openapi.yml) for full request/response schemas.
+
+| Method & path | Purpose |
+|---------------|---------|
+| `GET /api/hosts/full` | All hosts with config, tags, groups, alert thresholds |
+| `GET /api/hosts/{ip}` | One host's full record |
+| `PUT /api/hosts/{ip}/config` | Update per-IP interval/timeout/packetSize (restarts pinger) |
+| `PUT /api/hosts/{ip}/meta` | Update displayName/notes/tags |
+| `PUT /api/hosts/{ip}/alerts` | Update latency/loss alert thresholds |
+| `GET /api/series?ips=a,b&start=&end=&resolution=` | Aggregated series for several hosts (overlay) |
+| `GET /api/status?n=60` | NOC wall snapshot: per-host state, sparkline, breaches |
+| `GET /api/hosts/{ip}/availability` | Uptime % over a range |
+| `GET /api/hosts/{ip}/percentiles` | p50/p95/p99 + jitter over a range |
+| `GET /api/hosts/{ip}/outages?minFails=3` | Detected outage periods |
+| `GET/POST/PUT/DELETE /api/groups[...]` | Group CRUD, membership, `/health` rollup |
+| `GET/POST /api/hosts/{ip}/annotations`, `PUT/DELETE /api/annotations/{id}` | Comments / incidents / maintenance windows |
+
+### Legacy pinger endpoints
+
+#### POST /api/pinger/add
+Adds new IPs to monitor. Prefer `POST /api/hosts`.
 
 **Request:**
 ```json
@@ -60,25 +183,11 @@ Adds new IPs to monitor.
 }
 ```
 
-### POST /api/pinger/reset
-Resets statistics for specific IPs.
+#### POST /api/pinger/reset
+Resets statistics for specific IPs. Prefer `POST /api/hosts/{ip}/reset`.
 
-**Request:**
-```json
-{
-  "ips": ["192.168.1.1"]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true
-}
-```
-
-### POST /api/pinger/remove
-Removes pingers completely.
+#### POST /api/pinger/remove
+Removes pingers completely. Prefer `DELETE /api/hosts/{ip}`.
 
 **Request:**
 ```json
@@ -106,25 +215,119 @@ By default, the server listens on port 6868. You can access the web interface at
 
 ### Command-Line Options
 
-You can customize the server port using the `--port` flag:
+Run `pingmon --help` for a colorized summary of all flags with usage examples
+(color is automatically disabled when output is piped or `NO_COLOR` is set).
+
+Available flags:
 
 ```bash
-sudo go run main.go --port 8888
+sudo go run main.go \
+  --port 8888 \
+  --db /var/lib/pingmon/pingmon.db \
+  --raw-retain 720h \
+  --rollup-interval 5m
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `127.0.0.1` | Host/IP to listen on (`0.0.0.0` for all interfaces) |
+| `--port` | `6868` | HTTP port |
+| `--datafolder` | `data` | Directory for persistent data (created if missing) |
+| `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
+| `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
+| `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
+| `--token` | _(none)_ | Bearer token (lowercase uuid4) authorizing API access; **repeatable** |
+| `--env-file` | `.env` | File read for additional `token=` entries |
+| `--debug` | `false` | Verbose logging: per-ping output, auth decisions, request headers, rollup timing |
+| `--name` | _(OS hostname)_ | Instance name reported by `GET /api/ping` and `GET /api/profile` |
+
+## Authentication (optional)
+
+Token authentication is **off by default**. When started with one or more tokens,
+the API requires a Bearer token; with no tokens it is fully open.
+
+Provide tokens via repeatable `--token` flags and/or a `.env` file:
+
+```bash
+sudo go run main.go \
+  --token 3f2504e0-4f89-41d3-9a0c-0305e82c3301 \
+  --token a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+```
+
+```dotenv
+# .env  (comma-separated and/or repeated token= lines are both supported)
+token=3f2504e0-4f89-41d3-9a0c-0305e82c3301,a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+```
+
+Each token must be a **lowercase uuid4**; the server refuses to start on an
+invalid token. When any token is configured:
+
+- Every `/api/*` endpoint requires `Authorization: Bearer <token>` **except**
+  `GET /api/ping` and `GET /api/profile` (public).
+- Unauthorized, missing, or invalid-token requests to protected endpoints return
+  **403 Forbidden**. `404` is reserved for genuinely non-existent routes.
+
+Comparisons are constant-time. Tokens are never logged. Keep your `.env` out of
+version control (it is git-ignored).
+
+## Multi-backend / CORS
+
+This server is a self-contained, independent backend. A single frontend can
+register many PingMon servers (by URL, with an optional per-server token) and
+talk to each one directly, aggregating results client-side — no cross-server
+endpoint exists or is needed.
+
+To support a browser UI hosted on a different origin connecting to arbitrary
+backend URLs:
+
+- **CORS is fully open** (any origin, method, and header — including
+  `Authorization`) and preflight `OPTIONS` is answered. There are no CORS
+  checks, so a browser UI on any origin can connect to any backend URL. This is
+  safe because auth uses a bearer header (not cookies); protect the API with
+  tokens and/or `--host`/network controls rather than CORS.
+- **`GET /api/profile`** lets the UI fetch the instance name, version, and
+  whether auth is required when adding a backend.
+- A bad/missing token on a protected endpoint returns **`403`** (a wrong URL
+  returns `404`), so the UI can distinguish "forbidden" from "not found".
 
 ## Configuration
 
 The server uses the following default configuration:
 
-- **Port**: 6868 (customizable via `--port` flag)
+- **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network)
+- **Port**: 6868 (`--port`)
+- **Data folder**: `./data` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
+- **Database**: `<datafolder>/pingmon.db` (`--db` for a filename or absolute path)
+- **Raw retention**: 720h (`--raw-retain`)
+- **Rollup interval**: 5m (`--rollup-interval`)
 - **Static Files Directory**: `build`
-- **Ping Interval**: 1 second
+- **Default ping config**: interval 1s, timeout 2s, packet size 56 bytes (per-host, overridable)
 - **Number of Pings**: Continuous until stopped
 
 ## Security Considerations
 
-The application requires root/administrator privileges due to the use of ICMP ping. This is a standard requirement for applications using raw sockets. The application is designed for internal network use and does not implement authentication or authorization.
+The application requires root/administrator privileges due to the use of ICMP ping. This is a standard requirement for applications using raw sockets.
+
+API authentication is **optional** and off by default (see [Authentication](#authentication-optional)). When tokens are configured, all `/api/*` endpoints except `GET /api/ping` require a Bearer token and unauthorized requests receive a `404`. With no tokens configured the API is open and the application is intended for trusted, internal-network use only. There is no per-user authorization model — any valid token grants full API access. Terminate TLS at a reverse proxy for deployments exposed beyond localhost.
 
 ## Logging
 
-The server logs all ping operations, including successes and failures, along with their RTT statistics. All API requests are also logged with their response time.
+On startup the server prints a colorized overview — name, listen address, data
+folder, database path, number of monitored hosts, auth status (with masked
+tokens), CORS origins, retention/rollup, and debug state.
+
+Log lines are timestamped and colorized (color auto-disables when output is
+piped or `NO_COLOR` is set). By default the server logs concisely: host
+lifecycle events (start/stop/resume), one line per HTTP request (status colored
+by class, method, path, duration), rollup prune actions, and errors.
+
+Run with `--debug` for a verbose firehose suitable for troubleshooting:
+
+- Per-ping send/result lines and per-host `[PING-STATS]` summaries
+- Incoming-request lines with User-Agent, content length, and whether a Bearer token was present
+- Auth decisions (`auth: allowed/DENIED <path>`) — tokens themselves are never logged
+- Rollup job timing per tick
+
+```bash
+sudo go run main.go --debug
+```

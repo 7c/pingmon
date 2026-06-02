@@ -1,2 +1,16 @@
 .vscode/
 .DS_Store
+
+# Build artifacts
+/bin/
+
+# Default data folder (--datafolder) and SQLite database files
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files (may contain auth tokens)
+.env
+.env.*
+!.env.example

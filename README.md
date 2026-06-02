@@ -1,17 +1,20 @@
 # PingMon
-A real-time ping monitoring and visualization tool with a Go backend and React frontend.
+A sysadmin/NOC-grade ICMP ping monitoring tool with long-term analytics: a Go API backend and a web frontend.
 
 ## Overview
 
-PingMon is a web-based application that allows users to monitor the ping statistics of various hosts. It provides real-time ping data visualization with interactive charts.
+PingMon continuously pings many hosts, persists every result to SQLite, and serves a REST API for live status and long-term analysis. The server is API-only; the frontend is a separate web app that consumes the API.
 
 ### Features
 
-- **Multi-Host Monitoring**: Track multiple hosts simultaneously
-- **Real-Time Data**: Live updates of ping statistics
-- **Interactive Charts**: Visualize ping performance with line charts
-- **Customizable Views**: Toggle between different metrics (RTT, Min, Avg, Max)
-- **Actions**: Reset statistics or remove hosts from monitoring
+- **Multi-host monitoring** with **per-host** ping config (interval, timeout, packet size), display name, tags, and notes
+- **Long-term persistence** in SQLite with **hourly/daily rollups** for fast historical queries over months of data
+- **Analysis**: aggregated time-series (raw→minute→hour→day), percentiles (p50/p95/p99), jitter, uptime, and outage detection
+- **Organization**: host **groups** and **comments/incidents/maintenance** annotations pinned to the timeline
+- **Operations**: live NOC status overview, per-host **alert thresholds**
+- **Access**: optional **Bearer-token auth**, fully-open CORS, and **multi-backend** support (one UI, many servers)
+
+See the [Server Documentation](./server/README.md) for the full API, flags, and behavior.
 
 ## Project Structure
 
@@ -22,8 +25,8 @@ The application is divided into two main components:
 
 ## Requirements
 
-- **Go 1.18+**
-- **Node.js 16+**
+- **Go 1.21+** (the module declares `go 1.25`; the toolchain is fetched automatically)
+- **Node.js 18+** (for the client)
 - **Root/Administrator privileges** (required for ICMP operations)
 
 ## Installation
@@ -46,33 +49,47 @@ The application is divided into two main components:
    npm install
    ```
 
+## Architecture note
+
+The server and client are **independent**. The server is an API-only Go service
+(it does not serve the frontend), and the client is a separate web application
+that talks to the server's REST API. Deploy and run them separately.
+
 ## Building
 
-1. Build the client:
-   ```bash
-   cd client
-   npm run build
-   ```
+Build the server binary (output: `bin/pingmon`, git-ignored):
 
-   This will compile the React application and place the build files in the `server/build` directory.
+```bash
+make build
+```
+
+Other targets: `make run` (build + run as root), `make test`, `make race`,
+`make vet`, `make fmt`, `make tidy`, `make clean`, `make help`.
+
+The client is built and served on its own:
+
+```bash
+cd client
+npm run build   # or: npm run dev
+```
 
 ## Running
 
-The application requires root/administrator privileges to use ICMP ping:
+The server requires root/administrator privileges to use ICMP ping:
 
 ```bash
-cd server
-sudo go run main.go
+sudo ./bin/pingmon          # or: make run
 ```
 
-Once running, access the application at: http://localhost:6868
+On start it prints a colorized overview and listens on `127.0.0.1:6868` by
+default; the API lives under `/api` (health check: `GET /api/ping`). Data is
+persisted under `./data` (`--datafolder`). Common flags: `--host`, `--port`,
+`--datafolder`, `--token` (optional auth), `--name`, `--debug`. See
+`./bin/pingmon --help` or the [Server Documentation](./server/README.md) for the
+full list and the API contract.
 
-You can customize the server port using the `--port` flag:
-
-```bash
-cd server
-sudo go run main.go --port 8888
-```
+The client points at the server's API via its own configuration (the dev server
+proxies `/api` to the server port).
 
 ## Documentation
 
