@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: PingMon Server API
-  version: 1.4.0
+  version: 1.5.0
   description: >
     REST API for the PingMon backend. PingMon monitors ICMP ping statistics for a
     set of hosts with per-host ping configuration, persists the host list and
@@ -20,6 +20,13 @@ info:
     protected endpoints return **403 Forbidden**; **404** is reserved for
     genuinely non-existent routes. With no tokens configured the API is fully
     open.
+
+    Read-only mode: when started with `--readonly`, every mutating request
+    (`POST`/`PUT`/`PATCH`/`DELETE` under `/api`) is rejected with **423 Locked**
+    and a `{ "readOnly": true }` body; reads (and live polling) keep working.
+    `GET /api/profile` reports `readOnly` so clients can switch to a view-only
+    UI up front. Used to freeze hosts/groups or run a public demo with realtime
+    data.
 
     CORS is fully open and not configurable: every response carries
     `Access-Control-Allow-Origin: *`, any method/header is allowed (the requested
@@ -81,8 +88,9 @@ paths:
                 properties:
                   name: { type: string }
                   service: { type: string, example: pingmon }
-                  version: { type: string, example: 1.4.0 }
+                  version: { type: string, example: 1.5.0 }
                   authRequired: { type: boolean }
+                  readOnly: { type: boolean, description: "True when the server runs in --readonly mode; writes return 423." }
                   serverTime: { type: string, format: date-time }
                   defaults:
                     type: object

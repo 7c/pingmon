@@ -69,9 +69,24 @@ by the multi-backend UI when registering this server as a backend.
   "service": "pingmon",
   "version": "1.4.0",
   "authRequired": true,
+  "readOnly": false,
   "serverTime": "2026-06-02T10:00:00Z",
   "defaults": { "intervalMs": 1000, "timeoutMs": 2000, "packetSize": 56 }
 }
+```
+
+## Read-only / demo mode
+
+Start with `--readonly` to **freeze** all state: every mutating request
+(`POST`/`PUT`/`PATCH`/`DELETE` under `/api`) is rejected with **`423 Locked`**
+and a `{ "success": false, "readOnly": true }` body, while reads and live polling
+continue to work. `GET /api/profile` reports `"readOnly": true` so a UI can
+switch to view-only up front (rather than discovering it on the first failed
+write). Use it to publish a frozen view of your hosts/groups, or to run a public
+demo with realtime data that visitors cannot modify.
+
+```bash
+sudo ./bin/pingmon --readonly
 ```
 
 ### GET /api/pinger
@@ -234,6 +249,7 @@ sudo go run main.go \
 | `--port` | `6868` | HTTP port |
 | `--datafolder` | `data` | Directory for persistent data (created if missing) |
 | `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
+| `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
 | `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
 | `--token` | _(none)_ | Bearer token (lowercase uuid4) authorizing API access; **repeatable** |

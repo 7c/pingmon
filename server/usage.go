@@ -8,7 +8,7 @@ import (
 )
 
 // appVersion mirrors the API version documented in openapi.yml.
-const appVersion = "1.4.0"
+const appVersion = "1.5.0"
 
 // usageExample is a documented example invocation shown in --help.
 type usageExample struct {
@@ -23,6 +23,7 @@ var usageExamples = []usageExample{
 	{"Require token auth (repeatable) and enable verbose logging", "sudo pingmon --token 3f2504e0-4f89-41d3-9a0c-0305e82c3301 --debug"},
 	{"Name this instance and keep raw results for 30 days", "sudo pingmon --name edge-eu-1 --raw-retain 720h"},
 	{"Load tokens from a custom env file", "sudo pingmon --env-file /etc/pingmon/.env"},
+	{"Freeze data / demo (view-only, live data)", "sudo pingmon --readonly"},
 }
 
 // printUsage renders a colorized help screen. Colors auto-disable when output is

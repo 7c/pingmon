@@ -13,6 +13,7 @@ PingMon continuously pings many hosts, persists every result to SQLite, and serv
 - **Organization**: host **groups** and **comments/incidents/maintenance** annotations pinned to the timeline
 - **Operations**: live NOC status overview, per-host **alert thresholds**
 - **Access**: optional **Bearer-token auth**, fully-open CORS, and **multi-backend** support (one UI, many servers)
+- **Read-only / demo mode** (`--readonly`): freeze all writes for a view-only or public-demo deployment
 
 See the [Server Documentation](./server/README.md) for the full API, flags, and behavior.
 

@@ -387,6 +387,7 @@ func (pm *PingerManager) handleProfile(w http.ResponseWriter, r *http.Request) {
 		"service":      "pingmon",
 		"version":      appVersion,
 		"authRequired": authEnabled,
+		"readOnly":     readOnlyEnabled,
 		"serverTime":   time.Now().UTC(),
 		"defaults": map[string]int{
 			"intervalMs": cfg.IntervalMs,
@@ -694,6 +695,7 @@ var (
 	envFileFlag    = flag.String("env-file", ".env", "Path to a .env file read for additional token= entries")
 	debugFlag      = flag.Bool("debug", false, "Enable verbose debug logging (per-ping output, auth decisions, request/rollup detail)")
 	nameFlag       = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
+	readonlyFlag   = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
 	tokenFlags     multiToken
 )
 
@@ -758,6 +760,9 @@ func main() {
 	debugEnabled = *debugFlag
 	pinger.SetDebug(*debugFlag)
 
+	// Read-only mode (freeze writes / demo).
+	readOnlyEnabled = *readonlyFlag
+
 	// Check for root permissions
 	if !checkRootPermissions() {
 		log.Fatalf("ERROR: This application requires root/administrator privileges to use ICMP ping.\n" +
@@ -807,9 +812,9 @@ func main() {
 	authEnabled = len(tokens) > 0
 
 	// Middleware chain: logging (outermost) -> CORS (fully open, handles
-	// preflight) -> auth -> router, so preflight/unauthorized responses are
-	// still logged and carry CORS headers.
-	handler := loggingMiddleware(corsMiddleware(authMiddleware(tokens)(r)))
+	// preflight) -> auth -> read-only -> router, so preflight/unauthorized/locked
+	// responses are still logged and carry CORS headers.
+	handler := loggingMiddleware(corsMiddleware(authMiddleware(tokens)(readonlyMiddleware(r))))
 
 	// Listen address from flags (default binds to localhost only).
 	addr := net.JoinHostPort(*hostFlag, strconv.Itoa(*portFlag))
@@ -850,6 +855,7 @@ func main() {
 		rawRetain:      *rawRetainFlag,
 		rollupInterval: *rollupFlag,
 		debug:          debugEnabled,
+		readOnly:       readOnlyEnabled,
 	})
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

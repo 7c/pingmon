@@ -80,7 +80,7 @@ func TestProfileEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode profile: %v", err)
 	}
-	for _, k := range []string{"name", "service", "version", "authRequired", "serverTime", "defaults"} {
+	for _, k := range []string{"name", "service", "version", "authRequired", "readOnly", "serverTime", "defaults"} {
 		if _, ok := body[k]; !ok {
 			t.Fatalf("profile missing %q: %s", k, rec.Body.String())
 		}

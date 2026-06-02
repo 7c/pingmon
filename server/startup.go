@@ -20,6 +20,7 @@ type startupInfo struct {
 	rawRetain      time.Duration
 	rollupInterval time.Duration
 	debug          bool
+	readOnly       bool
 }
 
 // printStartupOverview prints a colorized at-a-glance summary to stdout. Colors
@@ -39,7 +40,11 @@ func printStartupOverview(info startupInfo) {
 	}
 
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "%s %s\n", title("● PingMon"), label("v"+info.version))
+	mode := ""
+	if info.readOnly {
+		mode = " " + warn("[READ-ONLY]")
+	}
+	fmt.Fprintf(out, "%s %s%s\n", title("● PingMon"), label("v"+info.version), mode)
 	row("name", val(info.name))
 	row("listen", val("http://"+info.addr))
 	row("data", val(info.dataFolder))
