@@ -90,7 +90,6 @@ func summarizeConfig(c Config) string {
 	add("host", c.Host != nil)
 	add("port", c.Port != nil)
 	add("datafolder", c.DataFolder != nil)
-	add("db", c.DB != nil)
 	add("raw_retain", c.RawRetain != nil)
 	add("rollup_interval", c.RollupInterval != nil)
 	add("debug", c.Debug != nil)

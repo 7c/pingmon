@@ -76,7 +76,6 @@ type Config struct {
 	Host            *string
 	Port            *int
 	DataFolder      *string
-	DB              *string
 	RawRetain       *time.Duration
 	RollupInterval  *time.Duration
 	Debug           *bool
@@ -106,7 +105,6 @@ var configKeys = map[string]keyKind{
 	"host":                  kString,
 	"port":                  kInt,
 	"datafolder":            kString,
-	"db":                    kString,
 	"raw_retain":            kDuration,
 	"rollup_interval":       kDurationPos,
 	"debug":                 kBool,
@@ -170,9 +168,6 @@ func validateConfigMap(raw map[string][]string) (Config, []error) {
 		case "datafolder":
 			s := val
 			c.DataFolder = &s
-		case "db":
-			s := val
-			c.DB = &s
 
 		case "port":
 			n, err := strconv.Atoi(val)
@@ -293,9 +288,6 @@ func applyConfigToFlags(c Config, setFlags map[string]bool) {
 	}
 	if c.DataFolder != nil {
 		apply("datafolder", func() { *dataFolderFlag = *c.DataFolder })
-	}
-	if c.DB != nil {
-		apply("db", func() { *dbFlag = *c.DB })
 	}
 	if c.RawRetain != nil {
 		apply("raw-retain", func() { *rawRetainFlag = *c.RawRetain })

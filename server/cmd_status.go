@@ -51,7 +51,6 @@ func runStatusCmd(args []string) int {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	configP := fs.String("config", defaultConfigPath, "Config file to read")
 	dfFlag := fs.String("datafolder", "", "Override data folder")
-	dbFlagS := fs.String("db", "", "Override database filename/path")
 	jsonOut := fs.Bool("json", false, "Output JSON")
 	_ = fs.Parse(args)
 
@@ -59,9 +58,8 @@ func runStatusCmd(args []string) int {
 
 	// Resolve effective values: command-line override > config > default.
 	dataFolder := firstNonEmpty(*dfFlag, deref(cfg.DataFolder, ""), defaultDataFolder)
-	db := firstNonEmpty(*dbFlagS, deref(cfg.DB, ""), "pingmon.db")
 	absFolder, _ := filepath.Abs(dataFolder)
-	dbPath := resolveDBPath(absFolder, db)
+	dbPath := resolveDBPath(absFolder)
 
 	minMs := 500
 	if cfg.MinPingInterval != nil {

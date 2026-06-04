@@ -22,7 +22,6 @@ func TestValidateConfigValid(t *testing.T) {
 		"host":                  {"0.0.0.0"},
 		"port":                  {"8888"},
 		"datafolder":            {"/var/lib/pingmon"},
-		"db":                    {"pingmon.db"},
 		"raw_retain":            {"720h"},
 		"rollup_interval":       {"5m"},
 		"debug":                 {"true"},

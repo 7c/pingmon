@@ -18,8 +18,8 @@ The server uses a manager pattern to handle multiple ping operations:
 
 ## Persistence & long-term analysis
 
-The server persists state to a SQLite database (default `pingmon.db`, configurable
-via `--db`):
+The server persists state to a SQLite database at `<datafolder>/pingmon.db`
+(data folder set via `--datafolder`, default `/var/lib/pingmon`):
 
 - **Monitored hosts** are remembered with **per-host config** (interval, timeout, packet size), display name, tags, notes, and alert thresholds — the server resumes pinging each at its configured interval after a restart.
 - **Every ping result** (success/failure, RTT, timestamp, error) is stored long-term. Results are written asynchronously in batches so the ping loop never blocks on disk.
@@ -241,9 +241,9 @@ Run `pingmon --help` for a colorized summary of all flags with usage examples
 Available flags:
 
 ```bash
-sudo go run main.go \
+sudo ./bin/pingmon \
   --port 8888 \
-  --db /var/lib/pingmon/pingmon.db \
+  --datafolder /var/lib/pingmon \
   --raw-retain 720h \
   --rollup-interval 5m
 ```
@@ -253,8 +253,7 @@ sudo go run main.go \
 | `--host` | `127.0.0.1` | Host/IP to listen on (`0.0.0.0` for all interfaces) |
 | `--port` | `6868` | HTTP port |
 | `--config` | `/etc/pingmon.conf` | Config file (KEY=VALUE); see `pingmon config` |
-| `--datafolder` | `/var/lib/pingmon` | Directory for persistent data (created if missing) |
-| `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
+| `--datafolder` | `/var/lib/pingmon` | Data directory (created if missing); DB is always `<datafolder>/pingmon.db` |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
 | `--arp-interval` | `1m` | ARP scan interval (or config `arp_interval`) |
@@ -376,7 +375,7 @@ pingmon arp [--json] [--no-resolve]
 pingmon status [--json] [--config FILE]
 
 # Stored-state summary (hosts, groups, results, db size, data span)
-pingmon stats [--json] [--datafolder DIR] [--db FILE]
+pingmon stats [--json] [--datafolder DIR]
 
 # Hosts
 pingmon host add [--interval ms] [--timeout ms] [--size n] [--name N] [--tags a,b] <ip> [<ip>...]
@@ -410,7 +409,7 @@ the current directory, shows you the unit and asks for confirmation, then runs
 `systemctl enable --now pingmon` (so it is **enabled on boot and started**).
 It requires Linux + root; on other systems it refuses cleanly.
 
-All store commands accept `--datafolder`/`--db` (defaulting to the server's).
+All store commands accept `--datafolder` (defaulting to the server's).
 The enforced minimum ping interval still applies (a low `--interval` is clamped
 up). Flags must come **before** positional arguments.
 
@@ -457,7 +456,7 @@ The server uses the following default configuration:
 - **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network)
 - **Port**: 6868 (`--port`)
 - **Data folder**: `/var/lib/pingmon` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
-- **Database**: `<datafolder>/pingmon.db` (`--db` for a filename or absolute path)
+- **Database**: always `<datafolder>/pingmon.db`
 - **Raw retention**: 720h (`--raw-retain`)
 - **Rollup interval**: 5m (`--rollup-interval`)
 - **Default ping config**: interval 1s, timeout 2s, packet size 56 bytes (per-host, overridable)

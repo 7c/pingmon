@@ -43,7 +43,7 @@ func runGroupCmd(args []string) int {
 
 func groupAdd(args []string) int {
 	fs := flag.NewFlagSet("group add", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	color_ := fs.String("color", "", "color tag")
 	desc := fs.String("desc", "", "description")
 	fs.Usage = func() {
@@ -55,7 +55,7 @@ func groupAdd(args []string) int {
 		return 2
 	}
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "group add: %v\n", err)
 		return 1
@@ -77,7 +77,7 @@ func groupAdd(args []string) int {
 
 func groupEdit(args []string) int {
 	fs := flag.NewFlagSet("group edit", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	name := fs.String("name", "", "new name")
 	color_ := fs.String("color", "", "new color")
 	desc := fs.String("desc", "", "new description")
@@ -95,7 +95,7 @@ func groupEdit(args []string) int {
 		return 2
 	}
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "group edit: %v\n", err)
 		return 1
@@ -130,10 +130,10 @@ func groupEdit(args []string) int {
 
 func groupList(args []string) int {
 	fs := flag.NewFlagSet("group list", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	_ = fs.Parse(args)
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "group list: %v\n", err)
 		return 1
@@ -168,7 +168,7 @@ func groupAssign(args []string, assign bool) int {
 		verb = "unassign"
 	}
 	fs := flag.NewFlagSet("group "+verb, flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(color.Output, "usage: pingmon group %s <group-id> <ip> [<ip>...]\n", verb)
 	}
@@ -183,7 +183,7 @@ func groupAssign(args []string, assign bool) int {
 		return 2
 	}
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "group %s: %v\n", verb, err)
 		return 1

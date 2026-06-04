@@ -19,11 +19,11 @@ func init() {
 
 func runStatsCmd(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	jsonOut := fs.Bool("json", false, "Output JSON")
 	_ = fs.Parse(args)
 
-	st, dbPath, err := openStoreFromFlags(*df, *db)
+	st, dbPath, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "stats: %v\n", err)
 		return 1

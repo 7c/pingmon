@@ -36,7 +36,7 @@ func runHostCmd(args []string) int {
 
 func hostAdd(args []string) int {
 	fs := flag.NewFlagSet("host add", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	interval := fs.Int("interval", store.DefaultIntervalMs, "ping interval (ms)")
 	timeout := fs.Int("timeout", store.DefaultTimeoutMs, "ping timeout (ms)")
 	size := fs.Int("size", store.DefaultPacketSize, "packet size (bytes)")
@@ -53,7 +53,7 @@ func hostAdd(args []string) int {
 		return 2
 	}
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "host add: %v\n", err)
 		return 1
@@ -87,10 +87,10 @@ func hostAdd(args []string) int {
 
 func hostList(args []string) int {
 	fs := flag.NewFlagSet("host list", flag.ExitOnError)
-	df, db := addStoreFlags(fs)
+	df := addStoreFlags(fs)
 	_ = fs.Parse(args)
 
-	st, _, err := openStoreFromFlags(*df, *db)
+	st, _, err := openStoreFromFlags(*df)
 	if err != nil {
 		fmt.Fprintf(color.Error, "host list: %v\n", err)
 		return 1

@@ -58,6 +58,9 @@ func NewPingerManager(s *store.Store) *PingerManager {
 // --datafolder or the config file. Created on startup if missing.
 const defaultDataFolder = "/var/lib/pingmon"
 
+// dbFileName is the fixed database filename inside the data folder.
+const dbFileName = "pingmon.db"
+
 // minPingIntervalMs is the server-enforced floor for a host's ping interval.
 // Any configured interval below this is clamped up. Set from
 // --min-ping-interval / config minimum_ping_interval (default 500ms).
@@ -231,13 +234,9 @@ func configPathIf(found bool, path string) string {
 	return ""
 }
 
-// resolveDBPath returns the database file path: an absolute --db value is used
-// as-is, otherwise it is placed inside the data folder.
-func resolveDBPath(dataFolder, db string) string {
-	if filepath.IsAbs(db) {
-		return db
-	}
-	return filepath.Join(dataFolder, db)
+// resolveDBPath returns the database file path: always <dataFolder>/pingmon.db.
+func resolveDBPath(dataFolder string) string {
+	return filepath.Join(dataFolder, dbFileName)
 }
 
 // GetStats returns statistics for all pingers
@@ -720,8 +719,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 var (
 	hostFlag       = flag.String("host", "127.0.0.1", "Host/IP address to listen on (use 0.0.0.0 for all interfaces)")
 	portFlag       = flag.Int("port", 6868, "Port to run the server on")
-	dataFolderFlag = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing")
-	dbFlag         = flag.String("db", "pingmon.db", "Database filename (within --datafolder) or an absolute path")
+	dataFolderFlag = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing. The database is always <datafolder>/pingmon.db")
 	rawRetainFlag  = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
 	rollupFlag     = flag.Duration("rollup-interval", 5*time.Minute, "How often the background rollup job runs")
 	configFlag     = flag.String("config", defaultConfigPath, "Path to the config file (KEY=VALUE; see `pingmon config`)")
@@ -835,7 +833,7 @@ func runServer() {
 	if err := os.MkdirAll(dataFolder, 0o755); err != nil {
 		log.Fatalf("ERROR: could not create data folder %q: %v", dataFolder, err)
 	}
-	dbPath := resolveDBPath(dataFolder, *dbFlag)
+	dbPath := resolveDBPath(dataFolder)
 
 	// Open the persistence store
 	st, err := store.New(dbPath)

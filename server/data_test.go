@@ -8,14 +8,9 @@ import (
 )
 
 func TestResolveDBPath(t *testing.T) {
-	// Relative db filename goes inside the data folder.
-	if got := resolveDBPath("/var/lib/pingmon", "pingmon.db"); got != filepath.Join("/var/lib/pingmon", "pingmon.db") {
-		t.Errorf("relative: got %q", got)
-	}
-	// Absolute db path is used as-is.
-	abs := filepath.Join(string(filepath.Separator), "tmp", "custom.db")
-	if got := resolveDBPath("/var/lib/pingmon", abs); got != abs {
-		t.Errorf("absolute: got %q, want %q", got, abs)
+	// The database is always <datafolder>/pingmon.db.
+	if got := resolveDBPath("/var/lib/pingmon"); got != filepath.Join("/var/lib/pingmon", "pingmon.db") {
+		t.Errorf("got %q", got)
 	}
 }
 

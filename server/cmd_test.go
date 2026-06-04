@@ -35,7 +35,7 @@ func TestCliStoreCommands(t *testing.T) {
 	}
 
 	// Verify persisted state directly.
-	st, _, err := openStoreFromFlags(dir, "pingmon.db")
+	st, _, err := openStoreFromFlags(dir)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
