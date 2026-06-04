@@ -87,7 +87,7 @@ sudo ./bin/pingmon          # or: make run
 
 On start it prints a colorized overview and listens on `127.0.0.1:6868` by
 default; the API lives under `/api` (health check: `GET /api/ping`). Data is
-persisted under `./data` (`--datafolder`). Common flags: `--host`, `--port`,
+persisted under `/var/lib/pingmon` (`--datafolder`). Common flags: `--host`, `--port`,
 `--datafolder`, `--token` (optional auth), `--name`, `--debug`. See
 `./bin/pingmon --help` or the [Server Documentation](./server/README.md) for the
 full list and the API contract.

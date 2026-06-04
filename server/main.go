@@ -54,6 +54,10 @@ func NewPingerManager(s *store.Store) *PingerManager {
 	}
 }
 
+// defaultDataFolder is where persistent data lives unless overridden by
+// --datafolder or the config file. Created on startup if missing.
+const defaultDataFolder = "/var/lib/pingmon"
+
 // minPingIntervalMs is the server-enforced floor for a host's ping interval.
 // Any configured interval below this is clamped up. Set from
 // --min-ping-interval / config minimum_ping_interval (default 500ms).
@@ -716,7 +720,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 var (
 	hostFlag       = flag.String("host", "127.0.0.1", "Host/IP address to listen on (use 0.0.0.0 for all interfaces)")
 	portFlag       = flag.Int("port", 6868, "Port to run the server on")
-	dataFolderFlag = flag.String("datafolder", "data", "Directory for persistent data (database, etc.); created if missing")
+	dataFolderFlag = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing")
 	dbFlag         = flag.String("db", "pingmon.db", "Database filename (within --datafolder) or an absolute path")
 	rawRetainFlag  = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
 	rollupFlag     = flag.Duration("rollup-interval", 5*time.Minute, "How often the background rollup job runs")

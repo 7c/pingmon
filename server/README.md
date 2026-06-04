@@ -253,7 +253,7 @@ sudo go run main.go \
 | `--host` | `127.0.0.1` | Host/IP to listen on (`0.0.0.0` for all interfaces) |
 | `--port` | `6868` | HTTP port |
 | `--config` | `/etc/pingmon.conf` | Config file (KEY=VALUE); see `pingmon config` |
-| `--datafolder` | `data` | Directory for persistent data (created if missing) |
+| `--datafolder` | `/var/lib/pingmon` | Directory for persistent data (created if missing) |
 | `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
@@ -456,7 +456,7 @@ The server uses the following default configuration:
 - **Config file**: `/etc/pingmon.conf` (`--config`), if present
 - **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network)
 - **Port**: 6868 (`--port`)
-- **Data folder**: `./data` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
+- **Data folder**: `/var/lib/pingmon` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
 - **Database**: `<datafolder>/pingmon.db` (`--db` for a filename or absolute path)
 - **Raw retention**: 720h (`--raw-retain`)
 - **Rollup interval**: 5m (`--rollup-interval`)

@@ -58,7 +58,7 @@ func runStatusCmd(args []string) int {
 	cfg, found, errs := loadConfig(*configP)
 
 	// Resolve effective values: command-line override > config > default.
-	dataFolder := firstNonEmpty(*dfFlag, deref(cfg.DataFolder, ""), "data")
+	dataFolder := firstNonEmpty(*dfFlag, deref(cfg.DataFolder, ""), defaultDataFolder)
 	db := firstNonEmpty(*dbFlagS, deref(cfg.DB, ""), "pingmon.db")
 	absFolder, _ := filepath.Abs(dataFolder)
 	dbPath := resolveDBPath(absFolder, db)
