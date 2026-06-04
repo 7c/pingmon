@@ -35,13 +35,39 @@ func parseKVFile(path string) (map[string][]string, error) {
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(k))
-		val := strings.Trim(strings.TrimSpace(v), `"'`)
-		out[key] = append(out[key], strings.TrimSpace(val))
+		out[key] = append(out[key], parseConfigValue(v))
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("read config file %q: %w", path, err)
 	}
 	return out, nil
+}
+
+// parseConfigValue extracts the value from the right-hand side of KEY=VALUE,
+// supporting surrounding quotes and trailing inline comments (e.g.
+// `host=1.2.3.4   # bind address` -> "1.2.3.4"). A '#' is only treated as a
+// comment when preceded by whitespace, so unquoted values containing '#' (like
+// `foo#bar`) are preserved. Quoted values may contain anything, including '#'.
+func parseConfigValue(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if q := v[0]; q == '"' || q == '\'' {
+		if i := strings.IndexByte(v[1:], q); i >= 0 {
+			return v[1 : 1+i] // content between the quotes (comment after is ignored)
+		}
+		return strings.TrimSpace(strings.Trim(v, string(q))) // unterminated quote
+	}
+	if v[0] == '#' {
+		return "" // whole value is a comment
+	}
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimSpace(v[:i])
+		}
+	}
+	return v
 }
 
 // Config holds settings loaded from /etc/pingmon.conf. Pointer fields are nil

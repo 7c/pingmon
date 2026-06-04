@@ -154,6 +154,50 @@ func TestConfigSetAndTestCommands(t *testing.T) {
 	}
 }
 
+func TestParseConfigValue(t *testing.T) {
+	cases := map[string]string{
+		"100.64.0.177            # interface to bind (use 0.0.0.0 for all)": "100.64.0.177",
+		"0.0.0.0 # bind all": "0.0.0.0",
+		"  5m   ":            "5m",
+		`"quoted # value"`:   "quoted # value", // '#' inside quotes is kept
+		"'single'":           "single",
+		"foo#bar":            "foo#bar", // no space before '#': not a comment
+		"# only a comment":   "",
+		"":                   "",
+		"value":              "value",
+	}
+	for in, want := range cases {
+		if got := parseConfigValue(in); got != want {
+			t.Errorf("parseConfigValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestConfigInlineComments verifies a real config with trailing comments (as in
+// the shipped demo) parses to clean values.
+func TestConfigInlineComments(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/pingmon.conf"
+	os.WriteFile(path, []byte(
+		"host=100.64.0.177            # interface to bind (use 0.0.0.0 for all)\n"+
+			"port=6868   # http port\n"+
+			"arpscan=true  # enable\n"), 0o600)
+
+	c, found, errs := loadConfig(path)
+	if !found || len(errs) != 0 {
+		t.Fatalf("found=%v errs=%s", found, errorsJoined(errs))
+	}
+	if c.Host == nil || *c.Host != "100.64.0.177" {
+		t.Fatalf("host parsed wrong: %v", c.Host)
+	}
+	if c.Port == nil || *c.Port != 6868 {
+		t.Fatalf("port parsed wrong: %v", c.Port)
+	}
+	if c.ArpScan == nil || !*c.ArpScan {
+		t.Fatalf("arpscan parsed wrong: %v", c.ArpScan)
+	}
+}
+
 func TestConfigCommandRegistered(t *testing.T) {
 	if _, ok := findCommand("config"); !ok {
 		t.Fatalf("config command not registered")

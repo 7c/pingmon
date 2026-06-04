@@ -371,6 +371,10 @@ pingmon token            # e.g. sudo pingmon --token "$(pingmon token)"
 # ARP (one-shot scan, no server)
 pingmon arp [--json] [--no-resolve]
 
+# Effective config + snapshot, WITHOUT starting the server (great for diagnosing
+# config issues — shows the real resolved listen address, paths, auth, etc.)
+pingmon status [--json] [--config FILE]
+
 # Stored-state summary (hosts, groups, results, db size, data span)
 pingmon stats [--json] [--datafolder DIR] [--db FILE]
 
