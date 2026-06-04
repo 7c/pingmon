@@ -385,8 +385,20 @@ pingmon group list
 pingmon group assign   <group-id> <ip> [<ip>...]
 pingmon group unassign <group-id> <ip> [<ip>...]
 
+# systemd service (Linux; requires root) — auto-detects the binary path and prompts
+pingmon systemctl install      # write unit, then enable --now (prompts; --yes to skip)
+pingmon systemctl uninstall    # stop, disable, and remove the unit (prompts)
+pingmon systemctl enable       # enable + start on boot
+pingmon systemctl disable      # disable + stop
+
 pingmon help            # list commands and flags
 ```
+
+`systemctl install` writes `/etc/systemd/system/pingmon.service` with
+`ExecStart` set to the **auto-detected binary path** and `WorkingDirectory` to
+the current directory, shows you the unit and asks for confirmation, then runs
+`systemctl enable --now pingmon` (so it is **enabled on boot and started**).
+It requires Linux + root; on other systems it refuses cleanly.
 
 All store commands accept `--datafolder`/`--db` (defaulting to the server's).
 The enforced minimum ping interval still applies (a low `--interval` is clamped
