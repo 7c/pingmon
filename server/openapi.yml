@@ -14,7 +14,7 @@ info:
     `resolution` of raw|minute|hour|day|auto.
 
     Authentication is OPTIONAL. When the server is started with one or more
-    tokens (`--token <uuid4>` repeatable, and/or `token=` in a .env file), every
+    tokens (`--token <uuid4>` repeatable, and/or `token=` in /etc/pingmon.conf), every
     `/api/*` endpoint EXCEPT `GET /api/ping` and `GET /api/profile` requires
     `Authorization: Bearer <token>`. Unauthorized or missing-token requests to
     protected endpoints return **403 Forbidden**; **404** is reserved for
@@ -30,7 +30,7 @@ info:
 
     ARP scanning: when started with `--arpscan`, the server periodically reads
     the OS ARP/neighbor table on all interfaces (interval from `arp_interval` in
-    the .env file or `--arp-interval`, default 1m), accumulates what it sees
+    /etc/pingmon.conf or `--arp-interval`, default 1m), accumulates what it sees
     (first/last seen, count, and every distinct name ever resolved; never
     forgotten), and serves it at `GET /api/arp`.
     That endpoint exists only when `--arpscan` is enabled; `/api/profile` reports

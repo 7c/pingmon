@@ -10,7 +10,7 @@
 *.db-shm
 *.db-wal
 
-# Environment files (may contain auth tokens)
-.env
-.env.*
-!.env.example
+# Local config copy (may contain auth tokens).
+# The shipped demo lives at server/etc/pingmon.conf and stays tracked.
+/pingmon.conf
+/server/pingmon.conf

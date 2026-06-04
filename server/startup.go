@@ -17,6 +17,7 @@ type startupInfo struct {
 	dbPath         string
 	hostCount      int
 	minIntervalMs  int
+	configPath     string
 	tokens         []string
 	rawRetain      time.Duration
 	rollupInterval time.Duration
@@ -49,6 +50,9 @@ func printStartupOverview(info startupInfo) {
 	}
 	fmt.Fprintf(out, "%s %s%s\n", title("● PingMon"), label("v"+info.version), mode)
 	row("name", val(info.name))
+	if info.configPath != "" {
+		row("config", val(info.configPath))
+	}
 	row("listen", val("http://"+info.addr))
 	row("data", val(info.dataFolder))
 	row("database", val(info.dbPath))

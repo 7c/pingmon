@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,17 +22,20 @@ const (
 func init() {
 	registerCommand(command{
 		name:    "systemctl",
-		summary: "Manage the systemd service: systemctl install|uninstall|enable|disable",
+		summary: "Manage the systemd service: systemctl install|uninstall|enable|disable|status",
 		run:     runSystemctlCmd,
 	})
 }
 
 func runSystemctlCmd(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(color.Error, "usage: pingmon systemctl <install|uninstall|enable|disable> [--yes]")
+		systemctlUsage(color.Output)
 		return 2
 	}
 	switch args[0] {
+	case "-h", "--help", "help":
+		systemctlUsage(color.Output)
+		return 0
 	case "install":
 		return systemctlInstall(args[1:])
 	case "uninstall":
@@ -40,10 +44,80 @@ func runSystemctlCmd(args []string) int {
 		return systemctlSimple(args[1:], "enable", "--now")
 	case "disable":
 		return systemctlSimple(args[1:], "disable", "--now")
+	case "status":
+		return systemctlStatus(args[1:])
 	default:
-		fmt.Fprintf(color.Error, "unknown systemctl subcommand: %s\n", args[0])
+		fmt.Fprintf(color.Error, "unknown systemctl subcommand: %s\n\n", args[0])
+		systemctlUsage(color.Error)
 		return 2
 	}
+}
+
+// systemctlUsage prints help for the systemctl subcommand.
+func systemctlUsage(w io.Writer) {
+	header := color.New(color.FgYellow, color.Bold).SprintFunc()
+	name := color.New(color.FgGreen, color.Bold).SprintFunc()
+	fmt.Fprintf(w, "%s manage the PingMon systemd service (Linux, root)\n\n", header("pingmon systemctl"))
+	fmt.Fprintln(w, header("SUBCOMMANDS"))
+	rows := [][2]string{
+		{"install [--yes]", "write the unit (auto-detected path) and enable --now"},
+		{"uninstall [--yes]", "stop, disable, and remove the unit"},
+		{"enable", "enable + start (on boot)"},
+		{"disable", "disable + stop"},
+		{"status", "show service status (pingmon + systemctl)"},
+	}
+	for _, r := range rows {
+		fmt.Fprintf(w, "  %s\n      %s\n", name(r[0]), r[1])
+	}
+	fmt.Fprintf(w, "\n  unit: %s\n", unitPath)
+}
+
+// systemctlStatus prints PingMon's own view plus `systemctl status pingmon`.
+func systemctlStatus(args []string) int {
+	fs := flag.NewFlagSet("systemctl status", flag.ExitOnError)
+	_ = fs.Parse(args)
+
+	if err := requireSystemd(); err != nil {
+		fmt.Fprintf(color.Error, "systemctl status: %v\n", err)
+		return 1
+	}
+
+	out := color.Output
+	header := color.New(color.FgCyan, color.Bold).SprintFunc()
+	label := color.New(color.Faint).SprintFunc()
+	on := color.New(color.FgGreen, color.Bold).SprintFunc()
+	off := color.New(color.Faint).SprintFunc()
+
+	// PingMon's view: is the unit installed, enabled, active?
+	installed := fileExists(unitPath)
+	enabled := runSystemctlQuiet("is-enabled", "--quiet", serviceName) == nil
+	active := runSystemctlQuiet("is-active", "--quiet", serviceName) == nil
+
+	yesno := func(b bool) string {
+		if b {
+			return on("yes")
+		}
+		return off("no")
+	}
+	fmt.Fprintf(out, "%s\n", header("● PingMon service"))
+	fmt.Fprintf(out, "  %s %s\n", label(fmt.Sprintf("%-10s", "unit")), unitPath)
+	fmt.Fprintf(out, "  %s %s\n", label(fmt.Sprintf("%-10s", "installed")), yesno(installed))
+	fmt.Fprintf(out, "  %s %s\n", label(fmt.Sprintf("%-10s", "enabled")), yesno(enabled))
+	fmt.Fprintf(out, "  %s %s\n\n", label(fmt.Sprintf("%-10s", "active")), yesno(active))
+
+	// Full systemctl output (best effort; non-zero exit when inactive is normal).
+	fmt.Fprintln(out, label("systemctl status "+serviceName+":"))
+	cmd := exec.Command("systemctl", "status", "--no-pager", serviceName)
+	cmd.Stdout = out
+	cmd.Stderr = color.Error
+	_ = cmd.Run()
+	return 0
+}
+
+// fileExists reports whether a path exists.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // requireSystemd verifies we are on Linux with systemctl available.

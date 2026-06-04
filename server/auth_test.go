@@ -3,8 +3,6 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -50,42 +48,10 @@ func TestMultiTokenFlag(t *testing.T) {
 	}
 }
 
-func TestLoadEnvTokens(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".env")
-	content := "# comment\n\nTOKEN=" + validToken1 + "\n" +
-		"token = " + validToken2 + " , " + validToken1 + "\n" +
-		"OTHER=ignored\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write env: %v", err)
-	}
-
-	tokens, err := loadEnvTokens(path)
-	if err != nil {
-		t.Fatalf("loadEnvTokens: %v", err)
-	}
-	// validToken1 (line 3) + validToken2, validToken1 (line 4) = 3 before dedupe.
-	if len(tokens) != 3 {
-		t.Fatalf("expected 3 raw tokens, got %d (%v)", len(tokens), tokens)
-	}
-	deduped := dedupeTokens(tokens)
-	if len(deduped) != 2 {
-		t.Fatalf("expected 2 deduped tokens, got %d", len(deduped))
-	}
-
-	// Missing file is not an error.
-	none, err := loadEnvTokens(filepath.Join(dir, "nope.env"))
-	if err != nil || none != nil {
-		t.Fatalf("missing env file should be (nil,nil), got (%v,%v)", none, err)
-	}
-}
-
-func TestLoadEnvTokensInvalid(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".env")
-	os.WriteFile(path, []byte("token=NOT-A-UUID\n"), 0o600)
-	if _, err := loadEnvTokens(path); err == nil {
-		t.Fatalf("expected error for invalid env token")
+func TestDedupeTokens(t *testing.T) {
+	got := dedupeTokens([]string{validToken1, validToken2, validToken1})
+	if len(got) != 2 || got[0] != validToken1 || got[1] != validToken2 {
+		t.Fatalf("expected 2 unique tokens in order, got %v", got)
 	}
 }
 

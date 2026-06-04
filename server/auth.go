@@ -33,30 +33,6 @@ func (m *multiToken) Set(v string) error {
 	return nil
 }
 
-// loadEnvTokens reads `token=` entries from a .env-style file. A missing file is
-// not an error. Each value may be a comma-separated list, and the key may repeat
-// across lines. Every value is validated as a lowercase uuid4.
-func loadEnvTokens(path string) ([]string, error) {
-	env, err := parseEnvFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var tokens []string
-	for _, raw := range env["token"] {
-		for _, t := range strings.Split(raw, ",") {
-			t = strings.TrimSpace(t)
-			if t == "" {
-				continue
-			}
-			if !isValidUUID4Lower(t) {
-				return nil, fmt.Errorf("token in %q must be a lowercase uuid4, got %q", path, t)
-			}
-			tokens = append(tokens, t)
-		}
-	}
-	return tokens, nil
-}
-
 // maskToken returns an identifiable but redacted form of a token for display
 // (e.g. "3f2504e0…3301"), so the operator can tell which tokens are active
 // without printing full secrets to the console/scrollback.

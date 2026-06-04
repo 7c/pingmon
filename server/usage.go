@@ -22,7 +22,7 @@ var usageExamples = []usageExample{
 	{"Store data in a fixed location", "sudo pingmon --datafolder /var/lib/pingmon"},
 	{"Require token auth (repeatable) and enable verbose logging", "sudo pingmon --token 3f2504e0-4f89-41d3-9a0c-0305e82c3301 --debug"},
 	{"Name this instance and keep raw results for 30 days", "sudo pingmon --name edge-eu-1 --raw-retain 720h"},
-	{"Load tokens from a custom env file", "sudo pingmon --env-file /etc/pingmon/.env"},
+	{"Use a config file (see: pingmon config)", "sudo pingmon --config /etc/pingmon.conf"},
 	{"Freeze data / demo (view-only, live data)", "sudo pingmon --readonly"},
 }
 

@@ -56,7 +56,7 @@ func NewPingerManager(s *store.Store) *PingerManager {
 
 // minPingIntervalMs is the server-enforced floor for a host's ping interval.
 // Any configured interval below this is clamped up. Set from
-// --min-ping-interval / .env minimum_ping_interval (default 500ms).
+// --min-ping-interval / config minimum_ping_interval (default 500ms).
 var minPingIntervalMs = 500
 
 // clampConfig raises a config's interval to the enforced minimum. Returns a copy.
@@ -216,6 +216,15 @@ func (pm *PingerManager) Count() int {
 	pm.mutex.RLock()
 	defer pm.mutex.RUnlock()
 	return len(pm.pingers)
+}
+
+// configPathIf returns path when a config file was found, else "" (banner uses
+// this to show whether a config file was loaded).
+func configPathIf(found bool, path string) string {
+	if found {
+		return path
+	}
+	return ""
 }
 
 // resolveDBPath returns the database file path: an absolute --db value is used
@@ -711,18 +720,21 @@ var (
 	dbFlag         = flag.String("db", "pingmon.db", "Database filename (within --datafolder) or an absolute path")
 	rawRetainFlag  = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
 	rollupFlag     = flag.Duration("rollup-interval", 5*time.Minute, "How often the background rollup job runs")
-	envFileFlag    = flag.String("env-file", ".env", "Path to a .env file read for additional token= entries")
+	configFlag     = flag.String("config", defaultConfigPath, "Path to the config file (KEY=VALUE; see `pingmon config`)")
 	debugFlag      = flag.Bool("debug", false, "Enable verbose debug logging (per-ping output, auth decisions, request/rollup detail)")
 	nameFlag       = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
 	readonlyFlag   = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
 	arpscanFlag    = flag.Bool("arpscan", false, "Enable periodic ARP scanning of all interfaces, exposed at GET /api/arp")
-	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (overrides .env arp_interval; default 1m)")
-	minPingFlag    = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (overrides .env minimum_ping_interval; default 500ms)")
+	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (or config arp_interval; default 1m)")
+	minPingFlag    = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (or config minimum_ping_interval; default 500ms)")
 	tokenFlags     multiToken
 )
 
 // arpEnabled reports whether ARP scanning is on (exposed via /api/profile).
 var arpEnabled bool
+
+// configTokens holds tokens loaded from the config file (merged with flags + config).
+var configTokens []string
 
 // serverName identifies this instance. It defaults to the OS hostname and can be
 // overridden with --name. It is exposed via GET /api/ping.
@@ -740,15 +752,11 @@ func init() {
 	flag.Usage = printUsage
 }
 
-// resolveTokens combines --token flags with token= entries from the env file,
-// validates them, and returns the deduped set. Fatal on an invalid env token.
+// resolveTokens combines --token flags with tokens from the config file and
+// returns the deduped set.
 func resolveTokens() []string {
-	envTokens, err := loadEnvTokens(*envFileFlag)
-	if err != nil {
-		log.Fatalf("ERROR: %v", err)
-	}
 	combined := append([]string{}, tokenFlags...)
-	combined = append(combined, envTokens...)
+	combined = append(combined, configTokens...)
 	return dedupeTokens(combined)
 }
 
@@ -775,6 +783,20 @@ func runServer() {
 	// Parse command-line flags
 	flag.Parse()
 
+	// Load /etc/pingmon.conf (or --config). Explicit command-line flags win over
+	// config values, which win over built-in defaults. Invalid config is fatal.
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	cfg, cfgFound, cfgErrs := loadConfig(*configFlag)
+	if len(cfgErrs) > 0 {
+		for _, e := range cfgErrs {
+			log.Printf("[CONFIG] %v", e)
+		}
+		log.Fatalf("ERROR: %d problem(s) in %s (run: pingmon config test %s)", len(cfgErrs), *configFlag, *configFlag)
+	}
+	applyConfigToFlags(cfg, setFlags)
+	configTokens = cfg.Tokens
+
 	// Resolve the instance name (flag overrides the hostname default).
 	if *nameFlag != "" {
 		serverName = *nameFlag
@@ -787,16 +809,12 @@ func runServer() {
 	// Read-only mode (freeze writes / demo).
 	readOnlyEnabled = *readonlyFlag
 
-	// Load the .env file once for env-configurable settings.
-	env, _ := parseEnvFile(*envFileFlag)
-
-	// Enforced minimum ping interval (flag overrides .env, default 500ms).
-	minDur := *minPingFlag
-	if minDur <= 0 {
-		minDur = envDuration(env, "minimum_ping_interval", 500*time.Millisecond)
-	}
-	if ms := int(minDur / time.Millisecond); ms > 0 {
-		minPingIntervalMs = ms
+	// Enforced minimum ping interval (flag/config; default 500ms). The config
+	// file value, if any, has already been applied to *minPingFlag above.
+	if *minPingFlag > 0 {
+		if ms := int(*minPingFlag / time.Millisecond); ms > 0 {
+			minPingIntervalMs = ms
+		}
 	}
 
 	// Check for root permissions
@@ -843,9 +861,9 @@ func runServer() {
 	var arpScanner *arp.Scanner
 	var arpInterval time.Duration
 	if arpEnabled {
-		arpInterval = *arpIntervalF
+		arpInterval = *arpIntervalF // flag/config; 0 means use the default below
 		if arpInterval <= 0 {
-			arpInterval = envDuration(env, "arp_interval", time.Minute)
+			arpInterval = time.Minute
 		}
 		arpScanner = arp.New(arpInterval)
 		arpScanner.Start()
@@ -857,7 +875,7 @@ func runServer() {
 	// service does not advertise itself to scanners). Liveness/identity are
 	// available only under /api/ping and /api/profile.
 
-	// Resolve API auth tokens (flags + env file).
+	// Resolve API auth tokens (flags + config file).
 	tokens := resolveTokens()
 	authEnabled = len(tokens) > 0
 
@@ -905,6 +923,7 @@ func runServer() {
 		dbPath:         dbPath,
 		hostCount:      pm.Count(),
 		minIntervalMs:  minPingIntervalMs,
+		configPath:     configPathIf(cfgFound, *configFlag),
 		tokens:         tokens,
 		rawRetain:      *rawRetainFlag,
 		rollupInterval: *rollupFlag,

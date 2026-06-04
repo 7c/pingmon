@@ -28,7 +28,7 @@ func runTokenCmd(_ []string) int {
 }
 
 // generateToken returns a cryptographically random lowercase RFC 4122 v4 UUID
-// (the format accepted by --token / .env token=).
+// (the format accepted by --token / config token=).
 func generateToken() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

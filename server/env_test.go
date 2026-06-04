@@ -12,33 +12,29 @@ import (
 	"github.com/7c/pingmon/classes/arp"
 )
 
-func TestParseEnvFile(t *testing.T) {
+func TestParseKVFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".env")
+	path := filepath.Join(dir, "pingmon.conf")
 	content := "# comment\n\nTOKEN=a\ntoken = b , c\narp_interval = 30s\nOTHER=\"quoted\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	env, err := parseEnvFile(path)
+	kv, err := parseKVFile(path)
 	if err != nil {
-		t.Fatalf("parseEnvFile: %v", err)
+		t.Fatalf("parseKVFile: %v", err)
 	}
-	if len(env["token"]) != 2 { // two token= lines
-		t.Fatalf("expected 2 token entries, got %v", env["token"])
+	if len(kv["token"]) != 2 { // two token= lines (lowercased key)
+		t.Fatalf("expected 2 token entries, got %v", kv["token"])
 	}
-	if env["other"][0] != "quoted" {
-		t.Fatalf("quotes not stripped: %v", env["other"])
+	if kv["other"][0] != "quoted" {
+		t.Fatalf("quotes not stripped: %v", kv["other"])
 	}
-	if got := envDuration(env, "arp_interval", time.Minute); got != 30*time.Second {
-		t.Fatalf("envDuration: want 30s, got %v", got)
-	}
-	// Missing key -> default.
-	if got := envDuration(env, "nope", time.Minute); got != time.Minute {
-		t.Fatalf("envDuration default: got %v", got)
+	if kv["arp_interval"][0] != "30s" {
+		t.Fatalf("value not parsed: %v", kv["arp_interval"])
 	}
 	// Missing file -> (nil, nil).
-	if m, err := parseEnvFile(filepath.Join(dir, "absent")); err != nil || m != nil {
+	if m, err := parseKVFile(filepath.Join(dir, "absent")); err != nil || m != nil {
 		t.Fatalf("missing file should be (nil,nil), got (%v,%v)", m, err)
 	}
 }

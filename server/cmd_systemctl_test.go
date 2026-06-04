@@ -1,10 +1,47 @@
 package main
 
 import (
+	"bytes"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/fatih/color"
 )
+
+func TestSystemctlUsage(t *testing.T) {
+	var buf bytes.Buffer
+	systemctlUsage(&buf)
+	out := buf.String()
+	for _, want := range []string{"install", "uninstall", "enable", "disable", "status", "SUBCOMMANDS"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestSystemctlHelpReturnsZero(t *testing.T) {
+	old := color.Output
+	color.Output = &bytes.Buffer{}
+	defer func() { color.Output = old }()
+	for _, h := range []string{"--help", "-h", "help"} {
+		if rc := runSystemctlCmd([]string{h}); rc != 0 {
+			t.Errorf("systemctl %s: rc=%d", h, rc)
+		}
+	}
+}
+
+func TestSystemctlStatusNonLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		return // depends on systemctl presence; don't assert
+	}
+	old := color.Output
+	color.Output = &bytes.Buffer{}
+	defer func() { color.Output = old }()
+	if rc := runSystemctlCmd([]string{"status"}); rc != 1 {
+		t.Fatalf("status on %s: expected rc=1, got %d", runtime.GOOS, rc)
+	}
+}
 
 func TestBuildUnit(t *testing.T) {
 	unit := buildUnit("/opt/pingmon/bin/pingmon", "/opt/pingmon")

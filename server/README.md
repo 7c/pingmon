@@ -252,16 +252,16 @@ sudo go run main.go \
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Host/IP to listen on (`0.0.0.0` for all interfaces) |
 | `--port` | `6868` | HTTP port |
+| `--config` | `/etc/pingmon.conf` | Config file (KEY=VALUE); see `pingmon config` |
 | `--datafolder` | `data` | Directory for persistent data (created if missing) |
 | `--db` | `pingmon.db` | Database filename (placed inside `--datafolder`) or an absolute path |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
-| `--arp-interval` | _(.env / 1m)_ | ARP scan interval (overrides `.env` `arp_interval`) |
-| `--min-ping-interval` | _(.env / 500ms)_ | Enforced minimum ping interval; lower values are clamped up (overrides `.env` `minimum_ping_interval`) |
+| `--arp-interval` | `1m` | ARP scan interval (or config `arp_interval`) |
+| `--min-ping-interval` | `500ms` | Enforced minimum ping interval; lower values are clamped up (or config `minimum_ping_interval`) |
 | `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
 | `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
 | `--token` | _(none)_ | Bearer token (lowercase uuid4) authorizing API access; **repeatable** |
-| `--env-file` | `.env` | File read for additional `token=` entries |
 | `--debug` | `false` | Verbose logging: per-ping output, auth decisions, request headers, rollup timing |
 | `--name` | _(OS hostname)_ | Instance name reported by `GET /api/ping` and `GET /api/profile` |
 
@@ -271,16 +271,16 @@ Token authentication is **off by default**. When started with one or more tokens
 the API requires a Bearer token; with no tokens it is fully open.
 
 Generate a token with `pingmon token` (it prints a random lowercase uuid4).
-Provide tokens via repeatable `--token` flags and/or a `.env` file:
+Provide tokens via repeatable `--token` flags and/or the config file:
 
 ```bash
-sudo go run main.go \
+sudo ./bin/pingmon \
   --token 3f2504e0-4f89-41d3-9a0c-0305e82c3301 \
   --token a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
 ```
 
-```dotenv
-# .env  (comma-separated and/or repeated token= lines are both supported)
+```ini
+# /etc/pingmon.conf  (comma-separated and/or repeated token= lines)
 token=3f2504e0-4f89-41d3-9a0c-0305e82c3301,a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
 ```
 
@@ -292,8 +292,8 @@ invalid token. When any token is configured:
 - Unauthorized, missing, or invalid-token requests to protected endpoints return
   **403 Forbidden**. `404` is reserved for genuinely non-existent routes.
 
-Comparisons are constant-time. Tokens are never logged. Keep your `.env` out of
-version control (it is git-ignored).
+Comparisons are constant-time. Tokens are never logged. Keep your config file
+out of version control if it contains tokens.
 
 ## Multi-backend / CORS
 
@@ -339,8 +339,8 @@ re-resolved each scan and **every distinct name ever seen is kept in `names`** �
 so a host whose reverse-DNS changes shows all of its names. Results are published
 at `GET /api/arp` as a helper for the UI.
 
-The scan interval comes from `.env` `arp_interval` (Go duration, default `1m`)
-or `--arp-interval`:
+The scan interval comes from `--arp-interval` or config `arp_interval` (Go
+duration, default `1m`):
 
 ```bash
 sudo ./bin/pingmon --arpscan --arp-interval 30s
@@ -354,7 +354,7 @@ the neighbor cache rather than actively probing.)
 The server enforces a floor on per-host ping intervals: any configured interval
 below the minimum is silently **clamped up** (the stored/returned value reflects
 the enforced value, so the UI sees the truth). Default `500ms`, configurable via
-`.env` `minimum_ping_interval` or `--min-ping-interval`. The floor is advertised
+`--min-ping-interval` or config `minimum_ping_interval`. The floor is advertised
 as `minIntervalMs` in `GET /api/profile`.
 
 ## CLI commands
@@ -385,11 +385,17 @@ pingmon group list
 pingmon group assign   <group-id> <ip> [<ip>...]
 pingmon group unassign <group-id> <ip> [<ip>...]
 
+# Config file (/etc/pingmon.conf)
+pingmon config test [path]     # validate the config (strict; lists every problem)
+sudo pingmon config set [path] # install the default config (prompts before overwrite)
+
 # systemd service (Linux; requires root) — auto-detects the binary path and prompts
 pingmon systemctl install      # write unit, then enable --now (prompts; --yes to skip)
 pingmon systemctl uninstall    # stop, disable, and remove the unit (prompts)
 pingmon systemctl enable       # enable + start on boot
 pingmon systemctl disable      # disable + stop
+pingmon systemctl status       # PingMon's view + `systemctl status pingmon`
+pingmon systemctl --help       # systemctl subcommand help
 
 pingmon help            # list commands and flags
 ```
@@ -407,20 +413,52 @@ up). Flags must come **before** positional arguments.
 > A running server only loads hosts at startup, so hosts added/edited via the
 > CLI while the server is running are picked up on its next restart.
 
+## Config file
+
+All settings live in a config file (default `/etc/pingmon.conf`, override with
+`--config`) using simple `KEY=VALUE` syntax. Keys mirror the flags, plus
+`token`, `arp_interval`, and `minimum_ping_interval`.
+
+**Precedence:** command-line flag → config file → built-in default. Tokens from
+flags and the config file are merged.
+
+```ini
+# /etc/pingmon.conf
+host=0.0.0.0
+port=6868
+datafolder=/var/lib/pingmon
+arpscan=true
+arp_interval=1m
+minimum_ping_interval=500ms
+token=3f2504e0-4f89-41d3-9a0c-0305e82c3301
+```
+
+Manage it with the CLI:
+
+```bash
+sudo pingmon config set        # install the commented default to /etc/pingmon.conf
+pingmon config test            # validate (strict — reports every problem at once)
+```
+
+Validation is **strict but graceful**: unknown keys, bad types/ranges, malformed
+durations/booleans, duplicate keys, and non-uuid4 tokens are all caught and
+listed together. A documented example ships at
+[`etc/pingmon.conf`](./etc/pingmon.conf).
+
 ## Configuration
 
 The server uses the following default configuration:
 
+- **Config file**: `/etc/pingmon.conf` (`--config`), if present
 - **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network)
 - **Port**: 6868 (`--port`)
 - **Data folder**: `./data` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
 - **Database**: `<datafolder>/pingmon.db` (`--db` for a filename or absolute path)
 - **Raw retention**: 720h (`--raw-retain`)
 - **Rollup interval**: 5m (`--rollup-interval`)
-- **Static Files Directory**: `build`
 - **Default ping config**: interval 1s, timeout 2s, packet size 56 bytes (per-host, overridable)
-- **Minimum ping interval**: 500ms (`--min-ping-interval` / `.env` `minimum_ping_interval`)
-- **ARP scan**: off (`--arpscan`); interval `.env` `arp_interval` / `--arp-interval`, default 1m
+- **Minimum ping interval**: 500ms (`--min-ping-interval` / config `minimum_ping_interval`)
+- **ARP scan**: off (`--arpscan`); interval `--arp-interval` / config `arp_interval`, default 1m
 - **Number of Pings**: Continuous until stopped
 
 ## Security Considerations
