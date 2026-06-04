@@ -82,7 +82,7 @@ func runStatusCmd(args []string) int {
 		RawRetain:      durStr(derefDur(cfg.RawRetain, 720*time.Hour)),
 		RollupInterval: durStr(derefDur(cfg.RollupInterval, 5*time.Minute)),
 		ArpScan:        derefBool(cfg.ArpScan, false),
-		ArpInterval:    durStr(derefDur(cfg.ArpInterval, time.Minute)),
+		ArpInterval:    durStr(derefDur(cfg.ArpInterval, 2*time.Minute)),
 		ReadOnly:       derefBool(cfg.ReadOnly, false),
 		Debug:          derefBool(cfg.Debug, false),
 		AuthEnabled:    len(cfg.Tokens) > 0,

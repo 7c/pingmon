@@ -256,7 +256,7 @@ sudo ./bin/pingmon \
 | `--datafolder` | `/var/lib/pingmon` | Data directory (created if missing); DB is always `<datafolder>/pingmon.db` |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
-| `--arp-interval` | `1m` | ARP scan interval (or config `arp_interval`) |
+| `--arp-interval` | `2m` | ARP scan interval (or config `arp_interval`) |
 | `--min-ping-interval` | `500ms` | Enforced minimum ping interval; lower values are clamped up (or config `minimum_ping_interval`) |
 | `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
 | `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
@@ -339,7 +339,7 @@ so a host whose reverse-DNS changes shows all of its names. Results are publishe
 at `GET /api/arp` as a helper for the UI.
 
 The scan interval comes from `--arp-interval` or config `arp_interval` (Go
-duration, default `1m`):
+duration, default `2m`):
 
 ```bash
 sudo ./bin/pingmon --arpscan --arp-interval 30s
@@ -431,7 +431,7 @@ host=0.0.0.0
 port=6868
 datafolder=/var/lib/pingmon
 arpscan=true
-arp_interval=1m
+arp_interval=2m
 minimum_ping_interval=500ms
 token=3f2504e0-4f89-41d3-9a0c-0305e82c3301
 ```
@@ -461,7 +461,7 @@ The server uses the following default configuration:
 - **Rollup interval**: 5m (`--rollup-interval`)
 - **Default ping config**: interval 1s, timeout 2s, packet size 56 bytes (per-host, overridable)
 - **Minimum ping interval**: 500ms (`--min-ping-interval` / config `minimum_ping_interval`)
-- **ARP scan**: off (`--arpscan`); interval `--arp-interval` / config `arp_interval`, default 1m
+- **ARP scan**: off (`--arpscan`); interval `--arp-interval` / config `arp_interval`, default 2m
 - **Number of Pings**: Continuous until stopped
 
 ## Security Considerations

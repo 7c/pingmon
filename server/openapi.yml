@@ -30,7 +30,7 @@ info:
 
     ARP scanning: when started with `--arpscan`, the server periodically reads
     the OS ARP/neighbor table on all interfaces (interval from `arp_interval` in
-    /etc/pingmon.conf or `--arp-interval`, default 1m), accumulates what it sees
+    /etc/pingmon.conf or `--arp-interval`, default 2m), accumulates what it sees
     (first/last seen, count, and every distinct name ever resolved; never
     forgotten), and serves it at `GET /api/arp`.
     That endpoint exists only when `--arpscan` is enabled; `/api/profile` reports

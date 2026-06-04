@@ -727,7 +727,7 @@ var (
 	nameFlag       = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
 	readonlyFlag   = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
 	arpscanFlag    = flag.Bool("arpscan", false, "Enable periodic ARP scanning of all interfaces, exposed at GET /api/arp")
-	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (or config arp_interval; default 1m)")
+	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (or config arp_interval; default 2m)")
 	minPingFlag    = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (or config minimum_ping_interval; default 500ms)")
 	tokenFlags     multiToken
 )
@@ -865,7 +865,7 @@ func runServer() {
 	if arpEnabled {
 		arpInterval = *arpIntervalF // flag/config; 0 means use the default below
 		if arpInterval <= 0 {
-			arpInterval = time.Minute
+			arpInterval = 2 * time.Minute
 		}
 		arpScanner = arp.New(arpInterval)
 		arpScanner.Start()

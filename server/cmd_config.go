@@ -140,6 +140,8 @@ func configSet(args []string) int {
 		return 1
 	}
 	fmt.Fprintf(out, "wrote default config to %s\n", path)
-	fmt.Fprintln(out, color.New(color.Faint).Sprint("Edit it, then validate with: pingmon config test"))
-	return 0
+	fmt.Fprintln(out, color.New(color.Faint).Sprint("Edit it, then re-run `pingmon status` to verify."))
+
+	// Show the resulting effective status for the file we just wrote.
+	return runStatusCmd([]string{"--config", path})
 }
