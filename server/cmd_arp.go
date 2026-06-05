@@ -25,13 +25,20 @@ func runArpCmd(args []string) int {
 	fs := flag.NewFlagSet("arp", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "Output JSON instead of a table")
 	noResolve := fs.Bool("no-resolve", false, "Skip reverse-DNS name resolution")
+	passive := fs.Bool("passive", false, "Read only the OS ARP cache (no active sweep)")
+	maxHosts := fs.Int("max-hosts", 256, "Skip active sweep of subnets larger than this many addresses")
 	fs.Usage = func() {
-		fmt.Fprintf(color.Output, "Usage: pingmon arp [--json] [--no-resolve]\n\nScans the OS ARP/neighbor table on all interfaces and prints discovered hosts.\n")
+		fmt.Fprintf(color.Output, "Usage: pingmon arp [--passive] [--max-hosts N] [--json] [--no-resolve]\n\n"+
+			"Discovers hosts on all interfaces. By default it actively ARP-sweeps each\n"+
+			"interface's IPv4 subnet (arp-scan -l style; needs Linux+root) AND reads the\n"+
+			"OS ARP cache. --passive reads only the cache (no broadcasts).\n")
 	}
 	_ = fs.Parse(args)
 
 	scanner := arp.New(0)
 	scanner.SetResolve(!*noResolve)
+	scanner.SetActive(!*passive)
+	scanner.SetActiveMaxHosts(*maxHosts)
 
 	entries, err := scanner.ScanOnce()
 	if err != nil {

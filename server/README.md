@@ -256,7 +256,10 @@ sudo ./bin/pingmon \
 | `--datafolder` | `/var/lib/pingmon` | Data directory (created if missing); DB is always `<datafolder>/pingmon.db` |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
 | `--arpscan` | `false` | Periodically scan the ARP table on all interfaces; exposes `GET /api/arp` |
-| `--arp-interval` | `2m` | ARP scan interval (or config `arp_interval`) |
+| `--arp-interval` | `2m` | Passive ARP-cache read interval (or config `arp_interval`) |
+| `--arp-active` | `true` | Actively ARP-sweep each subnet (arp-scan -l style; Linux+root, else passive) |
+| `--arp-active-interval` | `10m` | How often the active sweep runs (or config `arp_active_interval`) |
+| `--arp-active-max-hosts` | `256` | Skip active sweep of subnets larger than this (~/24) |
 | `--min-ping-interval` | `500ms` | Enforced minimum ping interval; lower values are clamped up (or config `minimum_ping_interval`) |
 | `--raw-retain` | `720h` | How long to keep raw results before pruning (`0` = forever) |
 | `--rollup-interval` | `5m` | How often the background rollup/prune job runs |
@@ -338,15 +341,32 @@ re-resolved each scan and **every distinct name ever seen is kept in `names`** �
 so a host whose reverse-DNS changes shows all of its names. Results are published
 at `GET /api/arp` as a helper for the UI.
 
-The scan interval comes from `--arp-interval` or config `arp_interval` (Go
-duration, default `2m`):
+**Two discovery modes, used together:**
+
+- **Passive** (always): reads the OS ARP/neighbor cache (`/proc/net/arp` on Linux,
+  `arp -an` elsewhere) every `--arp-interval` (default `2m`). Only shows hosts the
+  OS has recently talked to.
+- **Active** (`--arp-active`, default on; **Linux + root**): broadcasts ARP
+  "who-has" to every IP in each interface's IPv4 subnet — like `arp-scan -l` —
+  discovering live hosts with no prior traffic. It runs every
+  `--arp-active-interval` (default `10m`, separate from and slower than the
+  passive read so background broadcast stays infrequent). A /24 is ~254 tiny
+  packets in ~3 s. On macOS/non-root it **auto-falls back to passive** (logged
+  once). Subnets larger than `--arp-active-max-hosts` (default `256`, ≈/24) are
+  skipped (passive-only) to avoid flooding big networks.
 
 ```bash
-sudo ./bin/pingmon --arpscan --arp-interval 30s
+# server: passive every 2m + active sweep every 10m (defaults)
+sudo ./bin/pingmon --arpscan
+sudo ./bin/pingmon --arpscan --arp-active-interval 30s --arp-active-max-hosts 1024
+
+# one-shot CLI (active by default; needs root for the active sweep)
+sudo pingmon arp                # active + passive, like arp-scan -l
+pingmon arp --passive           # cache only, no broadcasts
 ```
 
-On Linux it reads `/proc/net/arp`; on macOS/BSD it parses `arp -an`. (This reads
-the neighbor cache rather than actively probing.)
+The `GET /api/arp` response schema is unchanged; entries now include
+active-discovery results in addition to the OS cache.
 
 ## Minimum ping interval
 

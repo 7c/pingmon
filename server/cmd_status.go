@@ -41,6 +41,9 @@ type effectiveStatus struct {
 	RollupInterval string       `json:"rollupInterval"`
 	ArpScan        bool         `json:"arpScan"`
 	ArpInterval    string       `json:"arpInterval"`
+	ArpActive      bool         `json:"arpActive"`
+	ArpActiveEvery string       `json:"arpActiveInterval"`
+	ArpActiveMax   int          `json:"arpActiveMaxHosts"`
 	ReadOnly       bool         `json:"readOnly"`
 	Debug          bool         `json:"debug"`
 	AuthEnabled    bool         `json:"authEnabled"`
@@ -83,6 +86,9 @@ func runStatusCmd(args []string) int {
 		RollupInterval: durStr(derefDur(cfg.RollupInterval, 5*time.Minute)),
 		ArpScan:        derefBool(cfg.ArpScan, false),
 		ArpInterval:    durStr(derefDur(cfg.ArpInterval, 2*time.Minute)),
+		ArpActive:      derefBool(cfg.ArpActive, true),
+		ArpActiveEvery: durStr(derefDur(cfg.ArpActiveEvery, 10*time.Minute)),
+		ArpActiveMax:   derefInt(cfg.ArpActiveMax, 256),
 		ReadOnly:       derefBool(cfg.ReadOnly, false),
 		Debug:          derefBool(cfg.Debug, false),
 		AuthEnabled:    len(cfg.Tokens) > 0,
@@ -181,7 +187,11 @@ func printStatus(s effectiveStatus) {
 	row("cors", val("fully open (any origin)"))
 
 	if s.ArpScan {
-		row("arpscan", on("on (every "+s.ArpInterval+")"))
+		mode := "passive " + s.ArpInterval
+		if s.ArpActive {
+			mode += fmt.Sprintf(", active %s (cap %d hosts)", s.ArpActiveEvery, s.ArpActiveMax)
+		}
+		row("arpscan", on("on")+" "+off(mode))
 	} else {
 		row("arpscan", off("off"))
 	}

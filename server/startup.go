@@ -10,21 +10,24 @@ import (
 
 // startupInfo holds the values shown in the startup overview banner.
 type startupInfo struct {
-	name           string
-	version        string
-	addr           string
-	dataFolder     string
-	dbPath         string
-	hostCount      int
-	minIntervalMs  int
-	configPath     string
-	tokens         []string
-	rawRetain      time.Duration
-	rollupInterval time.Duration
-	debug          bool
-	readOnly       bool
-	arpScan        bool
-	arpInterval    time.Duration
+	name             string
+	version          string
+	addr             string
+	dataFolder       string
+	dbPath           string
+	hostCount        int
+	minIntervalMs    int
+	configPath       string
+	tokens           []string
+	rawRetain        time.Duration
+	rollupInterval   time.Duration
+	debug            bool
+	readOnly         bool
+	arpScan          bool
+	arpInterval      time.Duration
+	arpActive        bool
+	arpActiveEvery   time.Duration
+	arpActiveMaxHost int
 }
 
 // printStartupOverview prints a colorized at-a-glance summary to stdout. Colors
@@ -73,7 +76,11 @@ func printStartupOverview(info startupInfo) {
 	row("cors", val("fully open (any origin)"))
 
 	if info.arpScan {
-		row("arpscan", on(fmt.Sprintf("on (every %s)", info.arpInterval)))
+		mode := fmt.Sprintf("passive %s", info.arpInterval)
+		if info.arpActive {
+			mode += fmt.Sprintf(", active %s (cap %d hosts)", info.arpActiveEvery, info.arpActiveMaxHost)
+		}
+		row("arpscan", on("on")+label(" "+mode))
 	} else {
 		row("arpscan", off("off"))
 	}

@@ -717,19 +717,22 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 
 // Command line flags
 var (
-	hostFlag       = flag.String("host", "127.0.0.1", "Host/IP address to listen on (use 0.0.0.0 for all interfaces)")
-	portFlag       = flag.Int("port", 6868, "Port to run the server on")
-	dataFolderFlag = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing. The database is always <datafolder>/pingmon.db")
-	rawRetainFlag  = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
-	rollupFlag     = flag.Duration("rollup-interval", 5*time.Minute, "How often the background rollup job runs")
-	configFlag     = flag.String("config", defaultConfigPath, "Path to the config file (KEY=VALUE; see `pingmon config`)")
-	debugFlag      = flag.Bool("debug", false, "Enable verbose debug logging (per-ping output, auth decisions, request/rollup detail)")
-	nameFlag       = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
-	readonlyFlag   = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
-	arpscanFlag    = flag.Bool("arpscan", false, "Enable periodic ARP scanning of all interfaces, exposed at GET /api/arp")
-	arpIntervalF   = flag.Duration("arp-interval", 0, "ARP scan interval (or config arp_interval; default 2m)")
-	minPingFlag    = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (or config minimum_ping_interval; default 500ms)")
-	tokenFlags     multiToken
+	hostFlag           = flag.String("host", "127.0.0.1", "Host/IP address to listen on (use 0.0.0.0 for all interfaces)")
+	portFlag           = flag.Int("port", 6868, "Port to run the server on")
+	dataFolderFlag     = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing. The database is always <datafolder>/pingmon.db")
+	rawRetainFlag      = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
+	rollupFlag         = flag.Duration("rollup-interval", 5*time.Minute, "How often the background rollup job runs")
+	configFlag         = flag.String("config", defaultConfigPath, "Path to the config file (KEY=VALUE; see `pingmon config`)")
+	debugFlag          = flag.Bool("debug", false, "Enable verbose debug logging (per-ping output, auth decisions, request/rollup detail)")
+	nameFlag           = flag.String("name", "", "Server name used to identify this instance (for profiling); defaults to the OS hostname")
+	readonlyFlag       = flag.Bool("readonly", false, "Read-only mode: block all write operations (writes return 423); for freezing data or a demo")
+	arpscanFlag        = flag.Bool("arpscan", false, "Enable periodic ARP scanning of all interfaces, exposed at GET /api/arp")
+	arpIntervalF       = flag.Duration("arp-interval", 0, "Passive ARP-cache read interval (or config arp_interval; default 2m)")
+	arpActiveFlag      = flag.Bool("arp-active", true, "Actively sweep each interface's IPv4 subnet (arp-scan -l style; Linux+root, falls back to passive)")
+	arpActiveIntervalF = flag.Duration("arp-active-interval", 0, "How often the active ARP sweep runs (or config arp_active_interval; default 10m)")
+	arpActiveMaxF      = flag.Int("arp-active-max-hosts", 256, "Skip active sweep of subnets larger than this many addresses (~/24); or config arp_active_max_hosts")
+	minPingFlag        = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (or config minimum_ping_interval; default 500ms)")
+	tokenFlags         multiToken
 )
 
 // arpEnabled reports whether ARP scanning is on (exposed via /api/profile).
@@ -861,13 +864,20 @@ func runServer() {
 	// Optionally start ARP scanning and expose it at GET /api/arp.
 	arpEnabled = *arpscanFlag
 	var arpScanner *arp.Scanner
-	var arpInterval time.Duration
+	var arpInterval, arpActiveInterval time.Duration
 	if arpEnabled {
 		arpInterval = *arpIntervalF // flag/config; 0 means use the default below
 		if arpInterval <= 0 {
 			arpInterval = 2 * time.Minute
 		}
+		arpActiveInterval = *arpActiveIntervalF
+		if arpActiveInterval <= 0 {
+			arpActiveInterval = 10 * time.Minute
+		}
 		arpScanner = arp.New(arpInterval)
+		arpScanner.SetActive(*arpActiveFlag)
+		arpScanner.SetActiveInterval(arpActiveInterval)
+		arpScanner.SetActiveMaxHosts(*arpActiveMaxF)
 		arpScanner.Start()
 		r.HandleFunc("/api/arp", arpHandler(arpScanner.Entries)).Methods(http.MethodGet)
 	}
@@ -918,21 +928,24 @@ func runServer() {
 
 	// Colorized at-a-glance overview.
 	printStartupOverview(startupInfo{
-		name:           serverName,
-		version:        appVersion,
-		addr:           addr,
-		dataFolder:     dataFolder,
-		dbPath:         dbPath,
-		hostCount:      pm.Count(),
-		minIntervalMs:  minPingIntervalMs,
-		configPath:     configPathIf(cfgFound, *configFlag),
-		tokens:         tokens,
-		rawRetain:      *rawRetainFlag,
-		rollupInterval: *rollupFlag,
-		debug:          debugEnabled,
-		readOnly:       readOnlyEnabled,
-		arpScan:        arpEnabled,
-		arpInterval:    arpInterval,
+		name:             serverName,
+		version:          appVersion,
+		addr:             addr,
+		dataFolder:       dataFolder,
+		dbPath:           dbPath,
+		hostCount:        pm.Count(),
+		minIntervalMs:    minPingIntervalMs,
+		configPath:       configPathIf(cfgFound, *configFlag),
+		tokens:           tokens,
+		rawRetain:        *rawRetainFlag,
+		rollupInterval:   *rollupFlag,
+		debug:            debugEnabled,
+		readOnly:         readOnlyEnabled,
+		arpScan:          arpEnabled,
+		arpInterval:      arpInterval,
+		arpActive:        arpEnabled && *arpActiveFlag,
+		arpActiveEvery:   arpActiveInterval,
+		arpActiveMaxHost: *arpActiveMaxF,
 	})
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

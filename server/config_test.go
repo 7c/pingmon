@@ -29,6 +29,9 @@ func TestValidateConfigValid(t *testing.T) {
 		"readonly":              {"no"},
 		"arpscan":               {"on"},
 		"arp_interval":          {"30s"},
+		"arp_active":            {"true"},
+		"arp_active_interval":   {"10m"},
+		"arp_active_max_hosts":  {"512"},
 		"minimum_ping_interval": {"500ms"},
 		"token":                 {validToken1 + "," + validToken2},
 	}
@@ -47,6 +50,26 @@ func TestValidateConfigValid(t *testing.T) {
 	}
 	if len(c.Tokens) != 2 {
 		t.Fatalf("expected 2 tokens, got %v", c.Tokens)
+	}
+	if c.ArpActive == nil || !*c.ArpActive || c.ArpActiveEvery == nil || *c.ArpActiveEvery != 10*time.Minute {
+		t.Fatalf("arp active not parsed: %+v", c)
+	}
+	if c.ArpActiveMax == nil || *c.ArpActiveMax != 512 {
+		t.Fatalf("arp_active_max_hosts not parsed: %v", c.ArpActiveMax)
+	}
+}
+
+func TestConfigArpActiveErrors(t *testing.T) {
+	_, errs := validateConfigMap(map[string][]string{
+		"arp_active":           {"maybe"}, // bad bool
+		"arp_active_interval":  {"0s"},    // must be > 0
+		"arp_active_max_hosts": {"0"},     // must be >= 1
+	})
+	joined := errorsJoined(errs)
+	for _, want := range []string{"arp_active:", "arp_active_interval:", "arp_active_max_hosts:"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing error %q in:\n%s", want, joined)
+		}
 	}
 }
 

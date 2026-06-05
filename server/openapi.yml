@@ -28,13 +28,16 @@ info:
     UI up front. Used to freeze hosts/groups or run a public demo with realtime
     data.
 
-    ARP scanning: when started with `--arpscan`, the server periodically reads
-    the OS ARP/neighbor table on all interfaces (interval from `arp_interval` in
-    /etc/pingmon.conf or `--arp-interval`, default 2m), accumulates what it sees
-    (first/last seen, count, and every distinct name ever resolved; never
-    forgotten), and serves it at `GET /api/arp`.
-    That endpoint exists only when `--arpscan` is enabled; `/api/profile` reports
-    `arpScan`.
+    ARP scanning: when started with `--arpscan`, the server discovers neighbors
+    on all interfaces using two modes — PASSIVE (read the OS ARP cache every
+    `arp_interval`, default 2m) and, on Linux+root, ACTIVE (`arp_active`, default
+    on) which broadcasts ARP who-has across each interface's IPv4 subnet
+    (arp-scan -l style) every `arp_active_interval` (default 10m), skipping
+    subnets larger than `arp_active_max_hosts` (default 256, ~/24). Active
+    auto-falls back to passive on macOS/non-root. Results accumulate (first/last
+    seen, count, every distinct name; never forgotten) and are served at
+    `GET /api/arp` (only when `--arpscan` is enabled; `/api/profile` reports
+    `arpScan`).
 
     CORS is fully open and not configurable: every response carries
     `Access-Control-Allow-Origin: *`, any method/header is allowed (the requested
@@ -412,8 +415,9 @@ paths:
     get:
       summary: Accumulated ARP scan results (only when --arpscan is enabled)
       description: >
-        Returns neighbors discovered across all interfaces, accumulated over all
-        scans (first/last seen + count). Available only when the server runs with
+        Returns neighbors discovered across all interfaces (passive ARP-cache
+        reads plus, on Linux+root, active ARP sweeps), accumulated over all scans
+        (first/last seen + count). Available only when the server runs with
         `--arpscan`; otherwise this route does not exist (404).
       operationId: getArp
       tags: [arp]

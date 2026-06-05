@@ -14,11 +14,28 @@ PingMon continuously pings many hosts, persists every result to SQLite, and serv
 - **Operations**: live NOC status overview, per-host **alert thresholds**
 - **Access**: optional **Bearer-token auth**, fully-open CORS, and **multi-backend** support (one UI, many servers)
 - **Read-only / demo mode** (`--readonly`): freeze all writes for a view-only or public-demo deployment
-- **ARP discovery** (`--arpscan`): periodically scan neighbors on all interfaces (ip/mac/name, accumulated) at `GET /api/arp`
+- **ARP discovery** (`--arpscan`): passive ARP-cache reads **plus active `arp-scan -l`-style subnet sweeps** (Linux+root, auto-fallback to passive); accumulated ip/mac/names at `GET /api/arp`
 - **Config file** (`/etc/pingmon.conf`): all settings in one `KEY=VALUE` file; validate with `pingmon config test`, install the default with `pingmon config set`
 - **CLI commands**: `pingmon status` (effective config + snapshot, no server), `pingmon token` (generate a token), `pingmon arp` (scan), `pingmon stats` (stored-state summary), `pingmon config test|set`, store-backed `pingmon host`/`pingmon group` management, and `pingmon systemctl install|uninstall|enable|disable|status` (systemd service) — plus an extensible command framework
 
 See the [Server Documentation](./server/README.md) for the full API, flags, and behavior.
+
+## Hosted UI
+
+A ready-to-use web UI is hosted at **[https://pingmon.org](https://pingmon.org)** — no
+deployment required. It is **client-only**: all configuration (backends, tokens,
+preferences) lives in your **browser's local storage**, and the UI talks directly
+to your own PingMon server(s) over XHR. Nothing is sent to or stored on
+pingmon.org; the page is just static assets served from there.
+
+```text
+single / multi-server  ───  XHR  ───  pingmon.org UI (browser, local storage)
+```
+
+Because the UI runs entirely in your browser, point it at any reachable PingMon
+server — one backend or many (the **multi-backend** support above). Your servers
+must allow cross-origin requests from `https://pingmon.org` (PingMon ships with
+fully-open CORS by default), and tokens you enter stay local to your browser.
 
 ## Project Structure
 

@@ -6,11 +6,13 @@ package arp
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,7 +36,9 @@ type rawEntry struct {
 	iface string
 }
 
-// Scanner periodically reads the ARP table and caches enriched entries.
+// Scanner periodically reads the ARP table and caches enriched entries. When
+// active scanning is enabled it also broadcasts ARP requests across each
+// interface's subnet (arp-scan -l style) to discover silent hosts.
 type Scanner struct {
 	interval time.Duration
 
@@ -42,23 +46,50 @@ type Scanner struct {
 	entries map[string]Entry // keyed by IP
 	resolve bool
 
+	// Active scanning (set before Start).
+	active         bool
+	activeInterval time.Duration // how often the active sweep runs (vs passive)
+	activeMaxHosts int           // skip subnets with more addresses than this
+	activeWarned   atomic.Bool   // log "unsupported" only once
+	lastActive     time.Time     // when the last active sweep ran
+
 	done chan struct{}
 	wg   sync.WaitGroup
 }
 
-// New creates a Scanner with the given scan interval (used by Start; ignored by
-// one-shot ScanOnce). Name resolution is on by default.
+// New creates a Scanner with the given (passive) scan interval. Name resolution
+// is on by default; active scanning is off.
 func New(interval time.Duration) *Scanner {
 	return &Scanner{
-		interval: interval,
-		entries:  make(map[string]Entry),
-		resolve:  true,
-		done:     make(chan struct{}),
+		interval:       interval,
+		entries:        make(map[string]Entry),
+		resolve:        true,
+		activeInterval: 10 * time.Minute,
+		activeMaxHosts: defaultActiveMaxHosts,
+		done:           make(chan struct{}),
 	}
 }
 
 // SetResolve toggles reverse-DNS name resolution.
 func (s *Scanner) SetResolve(v bool) { s.resolve = v }
+
+// SetActive enables/disables active ARP sweeping (arp-scan -l style).
+func (s *Scanner) SetActive(v bool) { s.active = v }
+
+// SetActiveInterval sets how often the active sweep runs (the passive cache read
+// still runs every interval). A non-positive value keeps the default.
+func (s *Scanner) SetActiveInterval(d time.Duration) {
+	if d > 0 {
+		s.activeInterval = d
+	}
+}
+
+// SetActiveMaxHosts caps which subnets are actively swept (by address count).
+func (s *Scanner) SetActiveMaxHosts(n int) {
+	if n > 0 {
+		s.activeMaxHosts = n
+	}
+}
 
 // Start launches the periodic scan loop.
 func (s *Scanner) Start() {
@@ -75,7 +106,8 @@ func (s *Scanner) Stop() {
 func (s *Scanner) loop() {
 	defer s.wg.Done()
 
-	if _, err := s.ScanOnce(); err != nil {
+	// Initial scan: active too (if enabled) so the cache fills promptly.
+	if _, err := s.scan(s.active); err != nil {
 		log.Printf("[ARP] initial scan failed: %v", err)
 	}
 
@@ -86,22 +118,51 @@ func (s *Scanner) loop() {
 		case <-s.done:
 			return
 		case <-ticker.C:
-			if _, err := s.ScanOnce(); err != nil {
+			// Passive every tick; active only when due (every activeInterval).
+			doActive := s.active && time.Since(s.lastActive) >= s.activeInterval
+			if _, err := s.scan(doActive); err != nil {
 				log.Printf("[ARP] scan failed: %v", err)
 			}
 		}
 	}
 }
 
-// ScanOnce reads the ARP table once, resolves the current name for each IP
-// (outside the lock), merges the results into the cache, and returns the full
-// sorted snapshot. Names are resolved every scan so that a name change is
-// detected and appended to the entry's Names list.
+// ScanOnce performs a single scan (active too, if active mode is enabled) and
+// returns the full sorted snapshot.
 func (s *Scanner) ScanOnce() ([]Entry, error) {
-	raws, err := readARPTable()
-	if err != nil {
-		return nil, err
+	return s.scan(s.active)
+}
+
+// scan reads the ARP table (and, when active, actively sweeps each interface's
+// subnet), resolves names outside the lock, merges into the cache, and returns
+// the sorted snapshot. Active failures fall back to passive (logged once for
+// unsupported platforms).
+func (s *Scanner) scan(active bool) ([]Entry, error) {
+	var raws []rawEntry
+
+	if active {
+		s.lastActive = time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), activeScanBudget)
+		act, err := activeScanAll(ctx, s.activeMaxHosts)
+		cancel()
+		if err != nil {
+			if errors.Is(err, errActiveUnsupported) {
+				if s.activeWarned.CompareAndSwap(false, true) {
+					log.Printf("[ARP] active scan unsupported on this platform, using passive cache")
+				}
+			} else {
+				log.Printf("[ARP] active scan error (continuing passive): %v", err)
+			}
+		}
+		raws = append(raws, act...) // active first → wins in dedup
 	}
+
+	passive, perr := readARPTable()
+	if perr != nil && len(raws) == 0 {
+		return nil, perr // both failed
+	}
+	raws = append(raws, passive...)
+	raws = dedupRaws(raws)
 
 	names := make(map[string]string, len(raws))
 	if s.resolve {

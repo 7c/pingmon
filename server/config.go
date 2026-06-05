@@ -83,6 +83,9 @@ type Config struct {
 	ReadOnly        *bool
 	ArpScan         *bool
 	ArpInterval     *time.Duration
+	ArpActive       *bool
+	ArpActiveEvery  *time.Duration
+	ArpActiveMax    *int
 	MinPingInterval *time.Duration
 	Tokens          []string
 }
@@ -112,6 +115,9 @@ var configKeys = map[string]keyKind{
 	"readonly":              kBool,
 	"arpscan":               kBool,
 	"arp_interval":          kDurationPos,
+	"arp_active":            kBool,
+	"arp_active_interval":   kDurationPos,
+	"arp_active_max_hosts":  kInt,
 	"minimum_ping_interval": kDurationPos,
 	"token":                 kTokens,
 }
@@ -197,6 +203,21 @@ func validateConfigMap(raw map[string][]string) (Config, []error) {
 			} else {
 				c.ArpScan = &b
 			}
+		case "arp_active":
+			if b, err := parseBoolStrict(val); err != nil {
+				add("arp_active: %v", err)
+			} else {
+				c.ArpActive = &b
+			}
+		case "arp_active_max_hosts":
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				add("arp_active_max_hosts: %q is not an integer", val)
+			} else if n < 1 {
+				add("arp_active_max_hosts: %d must be >= 1", n)
+			} else {
+				c.ArpActiveMax = &n
+			}
 
 		case "raw_retain":
 			if d, err := parseDurStrict(val, false); err != nil {
@@ -215,6 +236,12 @@ func validateConfigMap(raw map[string][]string) (Config, []error) {
 				add("arp_interval: %v", err)
 			} else {
 				c.ArpInterval = &d
+			}
+		case "arp_active_interval":
+			if d, err := parseDurStrict(val, true); err != nil {
+				add("arp_active_interval: %v", err)
+			} else {
+				c.ArpActiveEvery = &d
 			}
 		case "minimum_ping_interval":
 			if d, err := parseDurStrict(val, true); err != nil {
@@ -309,6 +336,15 @@ func applyConfigToFlags(c Config, setFlags map[string]bool) {
 	}
 	if c.ArpInterval != nil {
 		apply("arp-interval", func() { *arpIntervalF = *c.ArpInterval })
+	}
+	if c.ArpActive != nil {
+		apply("arp-active", func() { *arpActiveFlag = *c.ArpActive })
+	}
+	if c.ArpActiveEvery != nil {
+		apply("arp-active-interval", func() { *arpActiveIntervalF = *c.ArpActiveEvery })
+	}
+	if c.ArpActiveMax != nil {
+		apply("arp-active-max-hosts", func() { *arpActiveMaxF = *c.ArpActiveMax })
 	}
 	if c.MinPingInterval != nil {
 		apply("min-ping-interval", func() { *minPingFlag = *c.MinPingInterval })
