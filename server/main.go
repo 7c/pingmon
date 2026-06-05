@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -717,7 +718,6 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 
 // Command line flags
 var (
-	hostFlag           = flag.String("host", "127.0.0.1", "Host/IP address to listen on (use 0.0.0.0 for all interfaces)")
 	portFlag           = flag.Int("port", 6868, "Port to run the server on")
 	dataFolderFlag     = flag.String("datafolder", defaultDataFolder, "Directory for persistent data (database, etc.); created if missing. The database is always <datafolder>/pingmon.db")
 	rawRetainFlag      = flag.Duration("raw-retain", 720*time.Hour, "How long to keep raw ping results before pruning (0 = keep forever)")
@@ -733,7 +733,100 @@ var (
 	arpActiveMaxF      = flag.Int("arp-active-max-hosts", 256, "Skip active sweep of subnets larger than this many addresses (~/24); or config arp_active_max_hosts")
 	minPingFlag        = flag.Duration("min-ping-interval", 0, "Minimum enforced ping interval; lower values are clamped up (or config minimum_ping_interval; default 500ms)")
 	tokenFlags         multiToken
+	hostFlags          multiHost
 )
+
+// maxListenHosts caps how many --host values (IPs or interface names) are accepted.
+const maxListenHosts = 3
+
+// multiHost is a repeatable --host flag accepting IPs or interface names
+// (comma-separated values are also split).
+type multiHost []string
+
+func (m *multiHost) String() string { return strings.Join(*m, ",") }
+
+func (m *multiHost) Set(v string) error {
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			*m = append(*m, p)
+		}
+	}
+	return nil
+}
+
+// hostToIPs resolves a --host entry to listen IPs: an IP literal is used as-is;
+// otherwise it is treated as an interface name and expanded to its non-loopback,
+// non-link-local addresses.
+func hostToIPs(h string) ([]string, error) {
+	if net.ParseIP(h) != nil {
+		return []string{h}, nil // IP literal (incl. 0.0.0.0 / ::)
+	}
+	ifi, err := net.InterfaceByName(h)
+	if err != nil {
+		return nil, fmt.Errorf("%q is neither an IP address nor a known interface", h)
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("interface %q: %v", h, err)
+	}
+	var ips []string
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			continue
+		}
+		ips = append(ips, ip.String())
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("interface %q has no usable (non-loopback, non-link-local) IP address", h)
+	}
+	return ips, nil
+}
+
+// splitHostsOrDefault splits a comma-separated host string into entries,
+// defaulting to ["127.0.0.1"] when empty.
+func splitHostsOrDefault(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"127.0.0.1"}
+	}
+	return out
+}
+
+// resolveListenAddrs expands host entries (IPs or interface names) into deduped
+// host:port listen addresses.
+func resolveListenAddrs(hosts []string, port int) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, h := range hosts {
+		ips, err := hostToIPs(h)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			a := net.JoinHostPort(ip, strconv.Itoa(port))
+			if !seen[a] {
+				seen[a] = true
+				out = append(out, a)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no listen address resolved")
+	}
+	return out, nil
+}
 
 // arpEnabled reports whether ARP scanning is on (exposed via /api/profile).
 var arpEnabled bool
@@ -754,6 +847,7 @@ func defaultServerName() string {
 
 func init() {
 	flag.Var(&tokenFlags, "token", "Bearer token (lowercase uuid4) authorizing API access; repeatable. If any token is set, the API requires Authorization: Bearer <token>")
+	flag.Var(&hostFlags, "host", "Host/IP or interface name to listen on; repeatable up to 3 (default 127.0.0.1; 0.0.0.0 = all). An interface name binds to its IP(s)")
 	flag.Usage = printUsage
 }
 
@@ -896,11 +990,30 @@ func runServer() {
 	// responses are still logged and carry CORS headers.
 	handler := loggingMiddleware(corsMiddleware(authMiddleware(tokens)(readonlyMiddleware(r))))
 
-	// Listen address from flags (default binds to localhost only).
-	addr := net.JoinHostPort(*hostFlag, strconv.Itoa(*portFlag))
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+	// Resolve listen addresses (flag/config; default localhost). Each entry is an
+	// IP literal or an interface name expanded to its IP(s).
+	hosts := []string(hostFlags)
+	if len(hosts) == 0 {
+		hosts = []string{"127.0.0.1"}
+	}
+	if len(hosts) > maxListenHosts {
+		log.Fatalf("ERROR: at most %d --host values allowed, got %d", maxListenHosts, len(hosts))
+	}
+	addrs, err := resolveListenAddrs(hosts, *portFlag)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
+
+	srv := &http.Server{Handler: handler}
+
+	// Bind every address up front so bind errors are fatal before we serve.
+	listeners := make([]net.Listener, 0, len(addrs))
+	for _, a := range addrs {
+		ln, err := net.Listen("tcp", a)
+		if err != nil {
+			log.Fatalf("ERROR: cannot listen on %s: %v", a, err)
+		}
+		listeners = append(listeners, ln)
 	}
 
 	// Graceful shutdown: stop pingers and flush the store on SIGINT/SIGTERM.
@@ -930,7 +1043,7 @@ func runServer() {
 	printStartupOverview(startupInfo{
 		name:             serverName,
 		version:          appVersion,
-		addr:             addr,
+		listenAddrs:      addrs,
 		dataFolder:       dataFolder,
 		dbPath:           dbPath,
 		hostCount:        pm.Count(),
@@ -948,7 +1061,16 @@ func runServer() {
 		arpActiveMaxHost: *arpActiveMaxF,
 	})
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	// Serve every listener with the same server; Shutdown() closes them all.
+	var wg sync.WaitGroup
+	for _, ln := range listeners {
+		wg.Add(1)
+		go func(ln net.Listener) {
+			defer wg.Done()
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				log.Printf("serve %s: %v", ln.Addr(), err)
+			}
+		}(ln)
 	}
+	wg.Wait()
 }

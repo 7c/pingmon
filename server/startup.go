@@ -12,7 +12,7 @@ import (
 type startupInfo struct {
 	name             string
 	version          string
-	addr             string
+	listenAddrs      []string
 	dataFolder       string
 	dbPath           string
 	hostCount        int
@@ -56,7 +56,13 @@ func printStartupOverview(info startupInfo) {
 	if info.configPath != "" {
 		row("config", val(info.configPath))
 	}
-	row("listen", val("http://"+info.addr))
+	for i, a := range info.listenAddrs {
+		k := "listen"
+		if i > 0 {
+			k = ""
+		}
+		row(k, val("http://"+a))
+	}
 	row("data", val(info.dataFolder))
 	row("database", val(info.dbPath))
 	row("hosts", val(fmt.Sprintf("%d monitored", info.hostCount)))

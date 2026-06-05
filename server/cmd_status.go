@@ -28,9 +28,9 @@ type effectiveStatus struct {
 	ConfigPath     string       `json:"configPath"`
 	ConfigFound    bool         `json:"configFound"`
 	ConfigErrors   []string     `json:"configErrors,omitempty"`
-	Host           string       `json:"host"`
+	Hosts          []string     `json:"hosts"`
 	Port           int          `json:"port"`
-	Listen         string       `json:"listen"`
+	Listen         []string     `json:"listen"`
 	DataFolder     string       `json:"dataFolder"`
 	Database       string       `json:"database"`
 	DatabaseExists bool         `json:"databaseExists"`
@@ -76,7 +76,7 @@ func runStatusCmd(args []string) int {
 		Name:           deref(cfg.Name, defaultServerName()),
 		ConfigPath:     *configP,
 		ConfigFound:    found,
-		Host:           deref(cfg.Host, "127.0.0.1"),
+		Hosts:          splitHostsOrDefault(deref(cfg.Host, "127.0.0.1")),
 		Port:           derefInt(cfg.Port, 6868),
 		DataFolder:     absFolder,
 		Database:       dbPath,
@@ -94,7 +94,17 @@ func runStatusCmd(args []string) int {
 		AuthEnabled:    len(cfg.Tokens) > 0,
 		Tokens:         cfg.Tokens,
 	}
-	st.Listen = fmt.Sprintf("http://%s:%d", st.Host, st.Port)
+	// Resolve listen addresses best-effort (interface names → IPs); on error
+	// show the raw host:port so status never fails.
+	if addrs, err := resolveListenAddrs(st.Hosts, st.Port); err == nil {
+		for _, a := range addrs {
+			st.Listen = append(st.Listen, "http://"+a)
+		}
+	} else {
+		for _, h := range st.Hosts {
+			st.Listen = append(st.Listen, fmt.Sprintf("http://%s:%d (%v)", h, st.Port, err))
+		}
+	}
 	for _, e := range errs {
 		st.ConfigErrors = append(st.ConfigErrors, e.Error())
 	}
@@ -157,7 +167,13 @@ func printStatus(s effectiveStatus) {
 		row("config", val(s.ConfigPath)+" "+on("OK"))
 	}
 
-	row("listen", val(s.Listen))
+	for i, a := range s.Listen {
+		k := "listen"
+		if i > 0 {
+			k = ""
+		}
+		row(k, val(a))
+	}
 	row("data", val(s.DataFolder))
 	if s.DatabaseExists {
 		row("database", val(s.Database)+" "+off("("+humanBytes(s.DatabaseBytes)+")"))

@@ -39,14 +39,14 @@ func TestStatusEffectiveConfigJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &s); err != nil {
 		t.Fatalf("decode status json: %v\n%s", err, buf.String())
 	}
-	if s.Host != "100.64.0.177" {
-		t.Fatalf("host not parsed (inline comment?): %q", s.Host)
+	if len(s.Hosts) != 1 || s.Hosts[0] != "100.64.0.177" {
+		t.Fatalf("host not parsed (inline comment?): %v", s.Hosts)
 	}
 	if s.Port != 7777 {
 		t.Fatalf("port: got %d", s.Port)
 	}
-	if s.Listen != "http://100.64.0.177:7777" {
-		t.Fatalf("listen: got %q", s.Listen)
+	if len(s.Listen) != 1 || s.Listen[0] != "http://100.64.0.177:7777" {
+		t.Fatalf("listen: got %v", s.Listen)
 	}
 	if !s.ArpScan {
 		t.Fatalf("arpscan should be true")

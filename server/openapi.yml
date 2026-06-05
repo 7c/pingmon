@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: PingMon Server API
-  version: 1.6.0
+  version: 1.7.0
   description: >
     REST API for the PingMon backend. PingMon monitors ICMP ping statistics for a
     set of hosts with per-host ping configuration, persists the host list and
@@ -100,7 +100,7 @@ paths:
                 properties:
                   name: { type: string }
                   service: { type: string, example: pingmon }
-                  version: { type: string, example: 1.6.0 }
+                  version: { type: string, example: 1.7.0 }
                   authRequired: { type: boolean }
                   readOnly: { type: boolean, description: "True when the server runs in --readonly mode; writes return 423." }
                   arpScan: { type: boolean, description: "True when ARP scanning is enabled (GET /api/arp available)." }

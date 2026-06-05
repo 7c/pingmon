@@ -67,7 +67,7 @@ by the multi-backend UI when registering this server as a backend.
 {
   "name": "ping-eu-1",
   "service": "pingmon",
-  "version": "1.4.0",
+  "version": "1.7.0",
   "authRequired": true,
   "readOnly": false,
   "arpScan": true,
@@ -250,8 +250,8 @@ sudo ./bin/pingmon \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `127.0.0.1` | Host/IP to listen on (`0.0.0.0` for all interfaces) |
-| `--port` | `6868` | HTTP port |
+| `--host` | `127.0.0.1` | Address to listen on: an IP, `0.0.0.0` (all), or an interface name (e.g. `eth0`) whose IP(s) are bound. **Repeatable / comma-separated, up to 3** |
+| `--port` | `6868` | HTTP port (shared by all listen addresses) |
 | `--config` | `/etc/pingmon.conf` | Config file (KEY=VALUE); see `pingmon config` |
 | `--datafolder` | `/var/lib/pingmon` | Data directory (created if missing); DB is always `<datafolder>/pingmon.db` |
 | `--readonly` | `false` | Read-only mode: block all writes (return `423`); for freezing data or a demo |
@@ -384,6 +384,9 @@ as `minIntervalMs` in `GET /api/profile`.
 provisioning or inspecting a database offline.
 
 ```bash
+# Print the version and exit
+pingmon version          # also: pingmon --version, pingmon -v
+
 # Generate a random API token (prints the token only)
 pingmon token            # e.g. sudo pingmon --token "$(pingmon token)"
 
@@ -473,7 +476,7 @@ listed together. A documented example ships at
 The server uses the following default configuration:
 
 - **Config file**: `/etc/pingmon.conf` (`--config`), if present
-- **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network)
+- **Listen address**: 127.0.0.1 (`--host`; bind `0.0.0.0` to expose on the network, an interface name like `eth0`, or up to 3 comma-separated/repeated values)
 - **Port**: 6868 (`--port`)
 - **Data folder**: `/var/lib/pingmon` (`--datafolder`; auto-created) — holds the SQLite database (+ WAL files)
 - **Database**: always `<datafolder>/pingmon.db`

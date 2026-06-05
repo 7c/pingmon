@@ -308,7 +308,10 @@ func applyConfigToFlags(c Config, setFlags map[string]bool) {
 		}
 	}
 	if c.Host != nil {
-		apply("host", func() { *hostFlag = *c.Host })
+		apply("host", func() {
+			hostFlags = nil
+			_ = hostFlags.Set(*c.Host) // comma-separated list of IPs/interfaces
+		})
 	}
 	if c.Port != nil {
 		apply("port", func() { *portFlag = *c.Port })

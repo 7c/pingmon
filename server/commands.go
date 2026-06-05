@@ -39,6 +39,9 @@ func main() {
 		case "help", "-h", "--help":
 			printUsage()
 			return
+		case "version", "--version", "-v":
+			fmt.Fprintf(color.Output, "pingmon %s\n", appVersion)
+			return
 		}
 		// A non-flag first arg is treated as a subcommand.
 		if !strings.HasPrefix(args[0], "-") {
