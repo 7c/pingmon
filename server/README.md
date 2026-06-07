@@ -67,7 +67,7 @@ by the multi-backend UI when registering this server as a backend.
 {
   "name": "ping-eu-1",
   "service": "pingmon",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "authRequired": true,
   "readOnly": false,
   "arpScan": true,

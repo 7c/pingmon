@@ -5,13 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+// nextPingerID hands out a unique ICMP identifier per pinger. A raw ip4:icmp
+// socket receives copies of every ICMP packet on the host, so a distinct id
+// per host lets each pinger recognise its own replies. Masked to 16 bits to fit
+// the ICMP header (unique across the first 65535 pingers, far beyond any real
+// deployment).
+var nextPingerID atomic.Uint32
 
 // debugEnabled gates the high-frequency per-ping log output. It is off by
 // default (lifecycle events are still logged); enable it via SetDebug.
@@ -166,9 +173,9 @@ func NewPingerWithOptions(host string, options PingerOptions) (*Pinger, error) {
 		return nil, fmt.Errorf("%w: %s - %v", ErrHostNotResolved, host, err)
 	}
 
-	// Generate a random identifier
-	rand.Seed(time.Now().UnixNano())
-	id := rand.Intn(65535)
+	// Assign a unique ICMP identifier so this pinger can distinguish its own
+	// echo replies from those of other hosts sharing the raw ICMP socket space.
+	id := int(nextPingerID.Add(1) & 0xFFFF)
 
 	// Create a new pinger
 	p := &Pinger{
@@ -290,46 +297,43 @@ func (p *Pinger) sendPing() PingResult {
 		return result
 	}
 
-	// Read the reply
+	// Read replies until we see our own echo reply or the deadline expires. A
+	// raw ip4:icmp socket receives copies of every ICMP packet the host sees, so
+	// replies destined for other pingers (and stray ICMP) must be skipped rather
+	// than treated as a failed ping.
 	reply := make([]byte, 1500) // MTU size buffer
-	n, err := conn.Read(reply)
-	if err != nil {
-		result.Error = fmt.Errorf("error reading response: %v", err)
+	for {
+		n, err := conn.Read(reply)
+		if err != nil {
+			// Deadline reached (host unresponsive) or a real socket error.
+			result.Error = fmt.Errorf("error reading response: %v", err)
+			return result
+		}
+		if !matchEchoReply(reply[:n], id, seq) {
+			continue // not ours — keep reading until the deadline
+		}
+		// Calculate RTT using nanosecond precision.
+		result.RTT = time.Since(startTime)
+		result.Success = true
 		return result
 	}
+}
 
-	// Calculate RTT - ensuring we're using nanosecond precision
-	endTime := time.Now()
-	result.RTT = endTime.Sub(startTime)
-
-	// Validate the reply
-	if n < 20+8 { // 20 bytes for IP header and 8 bytes for ICMP header
-		result.Error = errors.New("received packet too short")
-		return result
+// matchEchoReply reports whether buf (a raw IPv4 packet read from the ICMP
+// socket) is the echo reply this pinger is waiting for. The sequence is matched
+// on its low 16 bits because that is all the ICMP header carries — comparing
+// against the full counter would break once it exceeds 65535.
+func matchEchoReply(buf []byte, id, seq int) bool {
+	if len(buf) < 20+8 { // 20-byte IPv4 header + 8-byte ICMP header
+		return false
 	}
-
-	// Skip the IP header (typically 20 bytes)
-	icmpReply := reply[20:]
-
-	// Check ICMP type and code
-	if icmpReply[0] != icmpEchoReply || icmpReply[1] != 0 {
-		result.Error = fmt.Errorf("received non-echo reply type=%d, code=%d", icmpReply[0], icmpReply[1])
-		return result
+	icmp := buf[20:] // skip the IPv4 header
+	if icmp[0] != icmpEchoReply || icmp[1] != 0 {
+		return false
 	}
-
-	// Check ID and sequence match
-	replyID := int(icmpReply[4])<<8 | int(icmpReply[5])
-	replySeq := int(icmpReply[6])<<8 | int(icmpReply[7])
-
-	if replyID != id || replySeq != seq {
-		result.Error = fmt.Errorf("received reply with wrong ID or sequence: expected id=%d, seq=%d but got id=%d, seq=%d",
-			id, seq, replyID, replySeq)
-		return result
-	}
-
-	// Ping successful
-	result.Success = true
-	return result
+	replyID := int(icmp[4])<<8 | int(icmp[5])
+	replySeq := int(icmp[6])<<8 | int(icmp[7])
+	return replyID == id && replySeq == (seq&0xFFFF)
 }
 
 // addResult safely adds a result to the results slice

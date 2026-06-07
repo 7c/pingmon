@@ -8,7 +8,7 @@ import (
 )
 
 // appVersion mirrors the API version documented in openapi.yml.
-const appVersion = "1.7.0"
+const appVersion = "1.7.1"
 
 // usageExample is a documented example invocation shown in --help.
 type usageExample struct {
