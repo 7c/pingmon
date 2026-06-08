@@ -21,6 +21,7 @@ type Stats struct {
 
 // Stats returns a snapshot of stored-state counts.
 func (s *Store) Stats() (Stats, error) {
+	defer s.measure()()
 	var st Stats
 	counts := []struct {
 		query string
@@ -35,7 +36,7 @@ func (s *Store) Stats() (Stats, error) {
 		{`SELECT COUNT(*) FROM ping_rollup_daily`, &st.RollupDaily},
 	}
 	for _, c := range counts {
-		if err := s.db.QueryRow(c.query).Scan(c.dst); err != nil {
+		if err := s.rdb.QueryRow(c.query).Scan(c.dst); err != nil {
 			return Stats{}, fmt.Errorf("stats count: %w", err)
 		}
 	}
@@ -57,7 +58,7 @@ func (s *Store) Stats() (Stats, error) {
 // the driver) and parses it.
 func (s *Store) boundaryTimestamp(query string) (time.Time, bool, error) {
 	var raw sql.NullString
-	if err := s.db.QueryRow(query).Scan(&raw); err != nil {
+	if err := s.rdb.QueryRow(query).Scan(&raw); err != nil {
 		return time.Time{}, false, fmt.Errorf("boundary timestamp: %w", err)
 	}
 	if !raw.Valid || raw.String == "" {

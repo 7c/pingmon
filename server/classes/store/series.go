@@ -69,6 +69,7 @@ func bucketSeconds(resolution string) int64 {
 // GetSeries returns aggregated buckets for one host over [start, end] at the
 // given resolution ("auto" resolves by span).
 func (s *Store) GetSeries(ip string, start, end time.Time, resolution string) (Series, error) {
+	defer s.measure()()
 	res := ResolveResolution(resolution, start, end)
 	series := Series{IP: ip, Resolution: res, From: start.UTC(), To: end.UTC(), Buckets: []Bucket{}}
 
@@ -107,7 +108,7 @@ func (s *Store) GetMultiSeries(ips []string, start, end time.Time, resolution st
 // bucketsFromRaw streams ordered raw results in range and aggregates them into
 // fixed-width buckets, computing exact percentiles and jitter per bucket.
 func (s *Store) bucketsFromRaw(ip string, start, end time.Time, bucketSec int64) ([]Bucket, error) {
-	rows, err := s.db.Query(
+	rows, err := s.rdb.Query(
 		`SELECT timestamp, success, rtt_ns FROM ping_results
 		  WHERE ip = ? AND timestamp >= ? AND timestamp < ?
 		  ORDER BY timestamp ASC, id ASC`,
@@ -236,7 +237,7 @@ func meanAbsSuccessiveDiff(rtts []int64) int64 {
 // are not materialized in rollups and are reported as zero.
 func (s *Store) bucketsFromRollup(table, ip string, start, end time.Time) ([]Bucket, error) {
 	//nolint:gosec // table is a fixed internal constant, never user input.
-	rows, err := s.db.Query(
+	rows, err := s.rdb.Query(
 		`SELECT bucket_start, sent, received, min_rtt_ns, avg_rtt_ns, max_rtt_ns, p95_rtt_ns
 		   FROM `+table+`
 		  WHERE ip = ? AND bucket_start >= ? AND bucket_start < ?

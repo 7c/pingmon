@@ -133,7 +133,7 @@ func (s *Store) GetHost(ip string) (Host, error) {
 		h         Host
 		updatedAt sql.NullTime
 	)
-	err := s.db.QueryRow(
+	err := s.rdb.QueryRow(
 		`SELECT ip, added_at, updated_at, display_name, notes,
 		        interval_ms, timeout_ms, packet_size, alert_latency_ms, alert_loss_pct
 		   FROM hosts WHERE ip = ?`,
@@ -171,7 +171,8 @@ func (s *Store) GetHost(ip string) (Host, error) {
 // ListHostsFull returns every monitored host with metadata, tags, and groups
 // assembled, oldest first. Tags and groups are fetched in bulk to avoid N+1.
 func (s *Store) ListHostsFull() ([]Host, error) {
-	rows, err := s.db.Query(
+	defer s.measure()()
+	rows, err := s.rdb.Query(
 		`SELECT ip, added_at, updated_at, display_name, notes,
 		        interval_ms, timeout_ms, packet_size, alert_latency_ms, alert_loss_pct
 		   FROM hosts ORDER BY added_at ASC`,
@@ -209,7 +210,7 @@ func (s *Store) ListHostsFull() ([]Host, error) {
 	}
 
 	// Bulk-load tags.
-	tagRows, err := s.db.Query(`SELECT ip, tag FROM host_tags ORDER BY tag ASC`)
+	tagRows, err := s.rdb.Query(`SELECT ip, tag FROM host_tags ORDER BY tag ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list host tags: %w", err)
 	}
@@ -228,7 +229,7 @@ func (s *Store) ListHostsFull() ([]Host, error) {
 	}
 
 	// Bulk-load group memberships.
-	grpRows, err := s.db.Query(`SELECT ip, group_id FROM host_groups ORDER BY group_id ASC`)
+	grpRows, err := s.rdb.Query(`SELECT ip, group_id FROM host_groups ORDER BY group_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list host groups: %w", err)
 	}
@@ -250,7 +251,7 @@ func (s *Store) ListHostsFull() ([]Host, error) {
 
 // hostTags returns the tags for a single host, sorted.
 func (s *Store) hostTags(ip string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT tag FROM host_tags WHERE ip = ? ORDER BY tag ASC`, ip)
+	rows, err := s.rdb.Query(`SELECT tag FROM host_tags WHERE ip = ? ORDER BY tag ASC`, ip)
 	if err != nil {
 		return nil, fmt.Errorf("get tags for %q: %w", ip, err)
 	}
@@ -268,7 +269,7 @@ func (s *Store) hostTags(ip string) ([]string, error) {
 
 // hostGroupIDs returns the group IDs a host belongs to.
 func (s *Store) hostGroupIDs(ip string) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT group_id FROM host_groups WHERE ip = ? ORDER BY group_id ASC`, ip)
+	rows, err := s.rdb.Query(`SELECT group_id FROM host_groups WHERE ip = ? ORDER BY group_id ASC`, ip)
 	if err != nil {
 		return nil, fmt.Errorf("get groups for %q: %w", ip, err)
 	}

@@ -37,8 +37,15 @@ type Result struct {
 }
 
 // Store wraps a SQLite database and an asynchronous batched result writer.
+//
+// Writes use a single connection (db) because SQLite permits only one writer.
+// Reads use a separate read-only pool (rdb) so heavy analytics queries run
+// concurrently (WAL) instead of serializing behind the writer.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB // single-writer connection (also used by the rollup job)
+	rdb *sql.DB // read-only pool for queries
+
+	reads readMetrics // read-query latency statistics
 
 	results   chan Result
 	flushReq  chan chan struct{}
@@ -70,8 +77,19 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 
+	// Open a separate read-only pool now that the writer has created the file
+	// and schema. WAL lets these readers run concurrently with the writer.
+	rdb, err := sql.Open("sqlite", readDSN(path))
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open read pool for %q: %w", path, err)
+	}
+	rdb.SetMaxOpenConns(maxReadConns)
+	rdb.SetMaxIdleConns(maxReadConns)
+
 	s := &Store{
 		db:       db,
+		rdb:      rdb,
 		results:  make(chan Result, writeBufferSize),
 		flushReq: make(chan chan struct{}),
 		done:     make(chan struct{}),
@@ -283,7 +301,7 @@ func (s *Store) RemoveHost(ip string) error {
 
 // ListHosts returns all monitored IPs, oldest first.
 func (s *Store) ListHosts() ([]string, error) {
-	rows, err := s.db.Query(`SELECT ip FROM hosts ORDER BY added_at ASC`)
+	rows, err := s.rdb.Query(`SELECT ip FROM hosts ORDER BY added_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list hosts: %w", err)
 	}
@@ -319,8 +337,9 @@ func (s *Store) GetResults(ip string, limit int) ([]Result, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
+	defer s.measure()()
 
-	rows, err := s.db.Query(
+	rows, err := s.rdb.Query(
 		`SELECT ip, seq, timestamp, success, rtt_ns, err_msg
 		   FROM ping_results
 		  WHERE ip = ?
@@ -459,7 +478,14 @@ func (s *Store) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.done)
 		s.wg.Wait()
-		s.closeErr = s.db.Close()
+		if s.rdb != nil {
+			if err := s.rdb.Close(); err != nil {
+				s.closeErr = err
+			}
+		}
+		if err := s.db.Close(); err != nil {
+			s.closeErr = err
+		}
 	})
 	return s.closeErr
 }

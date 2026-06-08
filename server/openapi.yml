@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: PingMon Server API
-  version: 1.7.1
+  version: 1.8.0
   description: >
     REST API for the PingMon backend. PingMon monitors ICMP ping statistics for a
     set of hosts with per-host ping configuration, persists the host list and
@@ -100,7 +100,7 @@ paths:
                 properties:
                   name: { type: string }
                   service: { type: string, example: pingmon }
-                  version: { type: string, example: 1.7.1 }
+                  version: { type: string, example: 1.8.0 }
                   authRequired: { type: boolean }
                   readOnly: { type: boolean, description: "True when the server runs in --readonly mode; writes return 423." }
                   arpScan: { type: boolean, description: "True when ARP scanning is enabled (GET /api/arp available)." }
@@ -112,6 +112,51 @@ paths:
                       intervalMs: { type: integer }
                       timeoutMs: { type: integer }
                       packetSize: { type: integer }
+
+  /api/runtime:
+    get:
+      summary: Live process runtime metrics (memory, goroutines, DB read latency)
+      description: >
+        Reports per-type memory usage (first/max/current), goroutine count,
+        uptime, GC cycles, and database read-query latency statistics. Auth-gated
+        like the rest of the API. Consumed by `pingmon stats` to show live numbers
+        for a running server.
+      operationId: runtime
+      tags: [stats]
+      responses:
+        "200":
+          description: Runtime snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  startedAt: { type: string, format: date-time }
+                  uptimeSec: { type: number }
+                  goroutines: { type: integer }
+                  numGC: { type: integer }
+                  memOrder:
+                    type: array
+                    items: { type: string }
+                    description: Display order of the keys in `mem`.
+                  mem:
+                    type: object
+                    description: "Per-type memory figures (bytes), keyed by type (alloc, heapInuse, heapSys, stackInuse, sys)."
+                    additionalProperties:
+                      type: object
+                      properties:
+                        first:   { type: integer, description: Value at startup. }
+                        max:     { type: integer, description: Peak observed. }
+                        current: { type: integer, description: Most recent sample. }
+                  reads:
+                    type: object
+                    description: Database read-query latency statistics.
+                    properties:
+                      count:   { type: integer }
+                      totalMs: { type: number }
+                      avgMs:   { type: number }
+                      maxMs:   { type: number }
+                      lastMs:  { type: number }
 
   /api/pinger:
     get:

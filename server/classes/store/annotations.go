@@ -79,7 +79,7 @@ func (s *Store) DeleteAnnotation(id int64) error {
 
 // GetAnnotation returns a single annotation.
 func (s *Store) GetAnnotation(id int64) (Annotation, error) {
-	row := s.db.QueryRow(
+	row := s.rdb.QueryRow(
 		`SELECT id, ip, type, title, text, color, author, start_ts, end_ts, created_at, updated_at
 		   FROM annotations WHERE id = ?`, id,
 	)
@@ -97,6 +97,7 @@ func (s *Store) GetAnnotation(id int64) (Annotation, error) {
 // optionally filtered by type. An annotation overlaps the window when its start
 // is before end and its end (or start, for point annotations) is at/after start.
 func (s *Store) ListAnnotations(ip string, start, end time.Time, types []string) ([]Annotation, error) {
+	defer s.measure()()
 	query := `SELECT id, ip, type, title, text, color, author, start_ts, end_ts, created_at, updated_at
 	            FROM annotations
 	           WHERE ip = ? AND start_ts < ? AND COALESCE(end_ts, start_ts) >= ?`
@@ -115,7 +116,7 @@ func (s *Store) ListAnnotations(ip string, start, end time.Time, types []string)
 	}
 	query += " ORDER BY start_ts ASC"
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.rdb.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list annotations for %q: %w", ip, err)
 	}

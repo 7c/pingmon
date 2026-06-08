@@ -67,7 +67,7 @@ func (s *Store) GetGroup(id int64) (Group, error) {
 		g         Group
 		updatedAt sql.NullTime
 	)
-	err := s.db.QueryRow(
+	err := s.rdb.QueryRow(
 		`SELECT id, name, color, description, created_at, updated_at FROM groups WHERE id = ?`, id,
 	).Scan(&g.ID, &g.Name, &g.Color, &g.Description, &g.CreatedAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -85,7 +85,7 @@ func (s *Store) GetGroup(id int64) (Group, error) {
 
 // ListGroups returns all groups ordered by name.
 func (s *Store) ListGroups() ([]Group, error) {
-	rows, err := s.db.Query(
+	rows, err := s.rdb.Query(
 		`SELECT id, name, color, description, created_at, updated_at FROM groups ORDER BY name ASC`,
 	)
 	if err != nil {
@@ -113,7 +113,7 @@ func (s *Store) ListGroups() ([]Group, error) {
 
 // ListHostsInGroup returns the IPs belonging to a group.
 func (s *Store) ListHostsInGroup(id int64) ([]string, error) {
-	rows, err := s.db.Query(
+	rows, err := s.rdb.Query(
 		`SELECT h.ip FROM host_groups hg JOIN hosts h ON h.ip = hg.ip
 		  WHERE hg.group_id = ? ORDER BY h.added_at ASC`, id,
 	)

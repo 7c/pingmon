@@ -61,6 +61,7 @@ type HostStatus struct {
 // GetAvailability computes uptime over [start, end], reading from the rollup
 // tables for long ranges and raw results for short ranges.
 func (s *Store) GetAvailability(ip string, start, end time.Time) (Availability, error) {
+	defer s.measure()()
 	a := Availability{IP: ip, From: start.UTC(), To: end.UTC()}
 	res := ResolveResolution(ResolutionAuto, start, end)
 
@@ -76,7 +77,7 @@ func (s *Store) GetAvailability(ip string, start, end time.Time) (Availability, 
 		query = `SELECT COUNT(*), COALESCE(SUM(success),0) FROM ping_results
 		          WHERE ip = ? AND timestamp >= ? AND timestamp < ?`
 	}
-	if err := s.db.QueryRow(query, ip, start.UTC(), end.UTC()).Scan(&a.Sent, &a.Received); err != nil {
+	if err := s.rdb.QueryRow(query, ip, start.UTC(), end.UTC()).Scan(&a.Sent, &a.Received); err != nil {
 		return Availability{}, fmt.Errorf("availability for %q: %w", ip, err)
 	}
 	if a.Sent > 0 {
@@ -88,7 +89,8 @@ func (s *Store) GetAvailability(ip string, start, end time.Time) (Availability, 
 // GetPercentiles computes RTT percentiles and jitter over successful pings in a
 // range (raw data).
 func (s *Store) GetPercentiles(ip string, start, end time.Time) (Percentiles, error) {
-	rows, err := s.db.Query(
+	defer s.measure()()
+	rows, err := s.rdb.Query(
 		`SELECT rtt_ns FROM ping_results
 		  WHERE ip = ? AND success = 1 AND timestamp >= ? AND timestamp < ?
 		  ORDER BY timestamp ASC, id ASC`,
@@ -131,7 +133,8 @@ func (s *Store) GetOutages(ip string, start, end time.Time, minFails int) ([]Out
 	if minFails < 1 {
 		minFails = 1
 	}
-	rows, err := s.db.Query(
+	defer s.measure()()
+	rows, err := s.rdb.Query(
 		`SELECT timestamp, success FROM ping_results
 		  WHERE ip = ? AND timestamp >= ? AND timestamp < ?
 		  ORDER BY timestamp ASC, id ASC`,

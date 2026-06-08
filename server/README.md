@@ -12,7 +12,7 @@ The server uses a manager pattern to handle multiple ping operations:
 
 - **PingerManager**: Coordinates all active ping operations
 - **Pinger Class**: Encapsulates ping functionality for a single host
-- **Store**: SQLite-backed persistence for hosts, results, rollups, groups, and annotations
+- **Store**: SQLite-backed persistence for hosts, results, rollups, groups, and annotations. Uses a single writer connection plus a separate read-only pool (WAL), so heavy analytics queries run concurrently instead of serializing behind the writer; read-query latency is tracked and exposed via `GET /api/runtime`
 - **Rollup job**: Background aggregation of raw results into hourly/daily summaries
 - **REST API**: The server's only surface; consumed by the separately-deployed frontend or any client
 
@@ -36,7 +36,7 @@ The server persists state to a SQLite database at `<datafolder>/pingmon.db`
 - Host groups with aggregate health; comments/annotations pinned to time points/ranges
 - Optional Bearer-token API authentication (see [Authentication](#authentication-optional))
 
-**The complete, authoritative API contract is in [openapi.yml](./openapi.yml)** (v1.3.0).
+**The complete, authoritative API contract is in [openapi.yml](./openapi.yml)** (v1.8.0).
 The endpoint summaries below cover the most common operations.
 
 ## Prerequisites
@@ -67,7 +67,7 @@ by the multi-backend UI when registering this server as a backend.
 {
   "name": "ping-eu-1",
   "service": "pingmon",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "authRequired": true,
   "readOnly": false,
   "arpScan": true,
@@ -178,6 +178,7 @@ See [openapi.yml](./openapi.yml) for full request/response schemas.
 | `PUT /api/hosts/{ip}/alerts` | Update latency/loss alert thresholds |
 | `GET /api/series?ips=a,b&start=&end=&resolution=` | Aggregated series for several hosts (overlay) |
 | `GET /api/status?n=60` | NOC wall snapshot: per-host state, sparkline, breaches |
+| `GET /api/runtime` | Live process metrics: memory (first/max/current per type), goroutines, uptime, DB read-latency stats |
 | `GET /api/hosts/{ip}/availability` | Uptime % over a range |
 | `GET /api/hosts/{ip}/percentiles` | p50/p95/p99 + jitter over a range |
 | `GET /api/hosts/{ip}/outages?minFails=3` | Detected outage periods |
@@ -397,8 +398,10 @@ pingmon arp [--json] [--no-resolve]
 # config issues — shows the real resolved listen address, paths, auth, etc.)
 pingmon status [--json] [--config FILE]
 
-# Stored-state summary (hosts, groups, results, db size, data span)
-pingmon stats [--json] [--datafolder DIR]
+# Stored-state summary (hosts, groups, results, db size, data span). If a server
+# is running and reachable (resolved from --config), also shows its LIVE runtime:
+# memory first/max/current per type, goroutines, uptime, and DB read latency.
+pingmon stats [--json] [--datafolder DIR] [--config FILE]
 
 # Hosts
 pingmon host add [--interval ms] [--timeout ms] [--size n] [--name N] [--tags a,b] <ip> [<ip>...]

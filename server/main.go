@@ -431,6 +431,15 @@ func (pm *PingerManager) handleGetStats(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, pm.GetStats())
 }
 
+// handleRuntime reports live process health: memory usage (first/max/current per
+// type), goroutine count, uptime, and database read-latency statistics. It is
+// auth-gated like the rest of the API so it is not exposed to anonymous
+// scanners. `pingmon stats` consumes it to show live numbers for a running
+// server.
+func (pm *PingerManager) handleRuntime(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, getRuntimeMetrics().snapshot(pm.store.ReadMetrics()))
+}
+
 // handleListHosts returns the set of currently monitored IPs (CRUD: Read).
 func (pm *PingerManager) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	ips, err := pm.store.ListHosts()
@@ -620,6 +629,7 @@ func registerAPIRoutes(r *mux.Router, pm *PingerManager) {
 
 	// Stats
 	api.HandleFunc("/pinger", pm.handleGetStats).Methods(http.MethodGet)
+	api.HandleFunc("/runtime", pm.handleRuntime).Methods(http.MethodGet)
 
 	// Hosts CRUD + metadata. Register the more specific /hosts/full before the
 	// /hosts/{ip} pattern so it is not captured as an IP.
@@ -955,6 +965,9 @@ func runServer() {
 	rl := rollup.New(st, *rollupFlag, *rawRetainFlag, *debugFlag)
 	rl.Start()
 
+	// Start runtime memory/latency tracking (exposed at GET /api/runtime).
+	mt := getRuntimeMetrics()
+
 	// Optionally start ARP scanning and expose it at GET /api/arp.
 	arpEnabled = *arpscanFlag
 	var arpScanner *arp.Scanner
@@ -1025,6 +1038,7 @@ func runServer() {
 
 		pm.StopAll()
 		rl.Stop()
+		mt.Stop()
 		if arpScanner != nil {
 			arpScanner.Stop()
 		}
